@@ -6,12 +6,27 @@ from .dylan import DyLAN_HumanEval, DyLAN_MATH, DyLAN_MMLU, DyLAN_Main
 from .autogen import AutoGen_Main
 from .camel import CAMEL_Main
 from .evomac import EvoMAC_Main
-from .chatdev import ChatDev_SRDD
+# from .chatdev import ChatDev_SRDD
 from .macnet import MacNet_Main, MacNet_SRDD
 from .mad import MAD_Main
 from .mapcoder import MapCoder_HumanEval, MapCoder_MBPP
 from .self_consistency import SelfConsistency
 from .mav import MAV_GPQA, MAV_HumanEval, MAV_Main, MAV_MATH, MAV_MMLU
+from .selforg import SelfOrg_Main
+from .selforg.selforg_no_debate import SelfOrg_NoDebate
+from .selforg.selforg_random_graph import SelfOrg_RandomGraph
+from .soo import SOO_Main
+from .soo_centered import SOO_Centered_Main
+from .soo_centered_v2 import SOO_Centered_v2_Main
+from .soo_math import SOO_Math_Main
+from .soo_pu import SOO_pu_Main, SOO_pu_pro_Main
+from .sparc import SPARC_Math_Main
+from .sparc_v2 import SPARC_v2_Math_Main
+from .arena import ARENA_Math_Main
+from .evo import EVO_Math_Main
+from .cascade import CASCADE_Math_Main
+from .soo_pu_final import SOO_pu_final_Main, SOO_pu_final_MATH, SOO_pu_final_soo_pu_Main
+from .h_swarm import HSwarm_Main, HSwarm_MultiObj_Main
 
 method2class = {
     "vanilla": MAS,
@@ -27,7 +42,7 @@ method2class = {
     "autogen": AutoGen_Main,
     "camel": CAMEL_Main,
     "evomac": EvoMAC_Main,
-    "chatdev_srdd": ChatDev_SRDD,
+    # "chatdev_srdd": ChatDev_SRDD,
     "macnet": MacNet_Main,
     "macnet_srdd": MacNet_SRDD,
     "mad": MAD_Main,
@@ -38,7 +53,26 @@ method2class = {
     "mav_humaneval": MAV_HumanEval,
     "mav_main": MAV_Main,
     "mav_math": MAV_MATH,
-    "mav_mmlu": MAV_MMLU
+    "mav_mmlu": MAV_MMLU,
+    "selforg": SelfOrg_Main,
+    "selforg_no_debate": SelfOrg_NoDebate,
+    "selforg_random_graph": SelfOrg_RandomGraph,
+    "soo": SOO_Main,
+    "soo_centered": SOO_Centered_Main,
+    "soo_centered_v2": SOO_Centered_v2_Main,
+    "soo_pu": SOO_pu_Main,
+    "soo_pu_pro": SOO_pu_pro_Main,
+    "soo_math": SOO_Math_Main,
+    "sparc_math": SPARC_Math_Main,
+    "arena_math": ARENA_Math_Main,
+    "evo_math": EVO_Math_Main,
+    "cascade_math": CASCADE_Math_Main,
+    "sparc_v2_math": SPARC_v2_Math_Main,
+    "soo_pu_final": SOO_pu_final_Main,
+    "soo_pu_final_math": SOO_pu_final_MATH,
+    "soo_pu_final_soo_pu": SOO_pu_final_soo_pu_Main,
+    "h_swarm": HSwarm_Main,
+    "h_swarm_multiobj": HSwarm_MultiObj_Main,
 }
 
 def get_method_class(method_name, dataset_name=None):

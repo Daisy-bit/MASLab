@@ -7,7 +7,7 @@ from datasets import load_dataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset_name", type=str, default="MATH")
-parser.add_argument("--dataset_path", type=str, default=None)
+parser.add_argument("--dataset_path", type=str, default="datasets/data")
 parser.add_argument("--num2sample", type=int, default=500)
 args = parser.parse_args()
 

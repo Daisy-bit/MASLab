@@ -1,0 +1,17 @@
+numpy
+scipy
+scikit-learn
+pyyaml
+
+# MASLab core runtime
+tqdm
+openai
+tenacity
+
+# datasets builder
+datasets
+
+# SelfOrg embeddings (preferred backend)
+sentence-transformers
+transformers
+

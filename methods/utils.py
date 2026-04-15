@@ -6,4 +6,5 @@ def load_config(config_path):
     return config
 
 def handle_retry_error(retry_state):
-    print(f"Retry failed")
+    exc = retry_state.outcome.exception()
+    print(f"Retry failed: {type(exc).__name__}: {exc}")

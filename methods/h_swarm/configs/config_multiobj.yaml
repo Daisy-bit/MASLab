@@ -1,0 +1,30 @@
+# HSwarm NSGA-II multi-objective topology optimization config
+# -----------------------------------------------------------
+
+# Number of agents/nodes in the topology graph
+num_agents: 5
+
+# NSGA-II parameters
+num_of_individuals: 50           # Population size
+num_of_generations: 100          # Number of generations
+tournament_prob: 0.9             # Tournament selection probability
+crossover_prob: 0.9              # Crossover probability
+mutation_prob: null               # Mutation probability (null = 1/D for d-vector, 1/N for pi)
+
+# Archive parameters
+ca_max_size: 20                  # Convergence Archive maximum size
+da_max_size: 20                  # Diversity Archive maximum size
+
+# Pareto selection strategy for inference after optimization
+# "utility"  - pick solution with highest accuracy
+# "balanced" - pick knee point (trade-off between accuracy and sparsity)
+pareto_selection: "utility"
+
+# Pre-optimized topology (skip optimization if provided)
+adjacency_matrix_path: null      # Path to .npy file (DAG matrix or d-vector)
+r_vector_path: null              # Path to .npy file with r/pi permutation vector
+
+# Prompt templates
+first_instruction: "Please answer the following question."
+non_last_instruction: "Please answer the following question with the help of previous responses, feel free to ignore wrong or unhelpful responses."
+last_instruction: "Please answer the following question with the help of previous responses, feel free to ignore wrong or unhelpful responses."

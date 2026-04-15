@@ -1,0 +1,41 @@
+# SOO + DyLAN-style math prompts + contribution-weighted answer plurality
+method_name: soo_math
+random_seed: 2025
+
+num_agents: 4
+top_k: 2
+max_rounds: 3
+sim_threshold: 0.5
+consensus_min_sim: 0.95
+consensus_range_eps: 0.1
+
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "weighted"
+embedding_dim: 512
+reform: false
+
+# SOO Perron consensus on exp(S/tau)
+consensus_tau: 0.3
+
+# DyLAN few-shot style
+mode: complex
+
+# Early math consensus: stop if this many agents agree on extracted answer (0 = off)
+early_math_consensus_min_agents: 3
+
+# ---------- Anchor settings ----------
+# | Mode               | Parameters             | Description                          |
+# |--------------------|------------------------|--------------------------------------|
+# | single             | -                      | argmax contribution (default)        |
+# | weighted_centroid  | -                      | nearest to weighted embedding centroid|
+# | top_k              | final_anchor_top_k     | top-k by contribution                |
+# | adaptive_mass      | final_anchor_mass      | cumulative contribution mass fraction|
+# | adaptive_rel       | final_anchor_rel_floor | relative to max contribution         |
+final_anchor_mode: weighted_centroid
+final_anchor_top_k: 2
+final_anchor_mass: 0.85
+final_anchor_rel_floor: 0.92
+
+# Inference trace (soo_math_v2 schema)
+trace_inference: true

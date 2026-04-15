@@ -1,0 +1,28 @@
+# HSwarm PSO topology optimization config
+# -----------------------------------------
+
+# Number of agents/nodes in the topology graph
+num_agents: 5
+
+# PSO parameters
+graph_num: 10                    # Number of graph particles in the swarm
+max_iteration: 50                # Maximum PSO iterations
+patience: 10                     # Early stopping: stop if no improvement for this many iters
+inertia: 0.4                    # PSO inertia weight (w)
+cognitive_coeff: 0.3             # Cognitive coefficient (c1) - pull toward personal best
+social_coeff: 0.3                # Social coefficient (c2) - pull toward global best
+repel_coeff: 0.0                 # Repulsion coefficient (c3) - push away from global worst
+step_length: 1.0                 # Step length scaling factor
+step_length_factor: 1.0          # Step length decay per iteration (1.0 = no decay)
+minimum_step_length: 0.1         # Minimum step length
+weight_randomness: true          # Randomize PSO coefficients each iteration
+
+# Pre-optimized topology
+# Set this to skip optimization and use a pre-searched adjacency matrix
+adjacency_matrix_path: null      # Path to .npy file with adjacency matrix
+use_discrete_matrix: false       # True if the loaded matrix is already a discrete DAG (auto-set when loading from file)
+
+# Prompt templates for graph-based inference
+first_instruction: "Please answer the following question."
+non_last_instruction: "Please answer the following question with the help of previous responses, feel free to ignore wrong or unhelpful responses."
+last_instruction: "Please answer the following question with the help of previous responses, feel free to ignore wrong or unhelpful responses."
