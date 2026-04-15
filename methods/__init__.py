@@ -19,13 +19,6 @@ from .soo import SOO_Main
 from .soo_centered import SOO_Centered_Main
 from .soo_centered_v2 import SOO_Centered_v2_Main
 from .soo_math import SOO_Math_Main
-from .soo_pu import SOO_pu_Main, SOO_pu_pro_Main
-from .sparc import SPARC_Math_Main
-from .sparc_v2 import SPARC_v2_Math_Main
-from .arena import ARENA_Math_Main
-from .evo import EVO_Math_Main
-from .cascade import CASCADE_Math_Main
-from .soo_pu_final import SOO_pu_final_Main, SOO_pu_final_MATH, SOO_pu_final_soo_pu_Main
 from .h_swarm import HSwarm_Main, HSwarm_MultiObj_Main
 
 method2class = {
@@ -60,29 +53,19 @@ method2class = {
     "soo": SOO_Main,
     "soo_centered": SOO_Centered_Main,
     "soo_centered_v2": SOO_Centered_v2_Main,
-    "soo_pu": SOO_pu_Main,
-    "soo_pu_pro": SOO_pu_pro_Main,
     "soo_math": SOO_Math_Main,
-    "sparc_math": SPARC_Math_Main,
-    "arena_math": ARENA_Math_Main,
-    "evo_math": EVO_Math_Main,
-    "cascade_math": CASCADE_Math_Main,
-    "sparc_v2_math": SPARC_v2_Math_Main,
-    "soo_pu_final": SOO_pu_final_Main,
-    "soo_pu_final_math": SOO_pu_final_MATH,
-    "soo_pu_final_soo_pu": SOO_pu_final_soo_pu_Main,
     "h_swarm": HSwarm_Main,
     "h_swarm_multiobj": HSwarm_MultiObj_Main,
 }
 
 def get_method_class(method_name, dataset_name=None):
-    
+
     # lowercase the method name
     method_name = method_name.lower()
-    
+
     all_method_names = method2class.keys()
     matched_method_names = [sample_method_name for sample_method_name in all_method_names if method_name in sample_method_name]
-    
+
     if len(matched_method_names) > 0:
         if dataset_name is not None:
             # lowercase the dataset name
@@ -95,5 +78,5 @@ def get_method_class(method_name, dataset_name=None):
                     print(f"[WARNING] Found multiple methods matching {dataset_name}: {matched_method_data_names}. Using {method_name} instead.")
     else:
         raise ValueError(f"[ERROR] No method found matching {method_name}. Please check the method name.")
-    
+
     return method2class[method_name]
