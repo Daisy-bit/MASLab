@@ -1,9 +1,7 @@
 model/*
-
+!model/scripts/
 
 results/*
-
-model/*
 
 *nopush*
 
