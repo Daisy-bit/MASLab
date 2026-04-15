@@ -15,6 +15,7 @@
 #    bash exp/run_ablation.sh --model_name qwen25-7b-instruct
 #    bash exp/run_ablation.sh --test_dataset_name GSM8K --model_name qwen25-3b-instruct
 #    bash exp/run_ablation.sh --datasets "GSM8K GSM-Hard"
+#    bash exp/run_ablation.sh --max_samples 30           # 每数据集最多30条（快速测试）
 # ======================================================================
 
 set -euo pipefail
@@ -37,6 +38,7 @@ METHODS=(selforg selforg_no_debate selforg_random_graph soo soo_centered soo_cen
 # -------------------- 解析命令行参数 --------------------
 EFF_MODEL="$DEFAULT_MODEL"
 EFF_DATASETS="$DEFAULT_DATASETS"
+MAX_SAMPLES=""
 OTHER_ARGS=()
 ARGS=("$@")
 i=0
@@ -51,11 +53,20 @@ while [[ $i -lt ${#ARGS[@]} ]]; do
         --datasets)
             EFF_DATASETS="${ARGS[$((i+1))]}"
             ((i+=2)); continue ;;
+        --max_samples)
+            MAX_SAMPLES="${ARGS[$((i+1))]}"
+            ((i+=2)); continue ;;
         *)
             OTHER_ARGS+=("${ARGS[$i]}")
             ((i++)) || true ;;
     esac
 done
+
+# 构建 max_samples 参数
+MAX_SAMPLES_ARGS=()
+if [[ -n "$MAX_SAMPLES" ]]; then
+    MAX_SAMPLES_ARGS=(--max_samples "$MAX_SAMPLES")
+fi
 
 # -------------------- 输出目录 --------------------
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -66,11 +77,12 @@ exec > >(tee "$LOG_FILE") 2>&1
 
 echo "======================================================================"
 echo "  SelfOrg Ablation Experiments"
-echo "  Model:    ${EFF_MODEL}"
-echo "  Datasets: ${EFF_DATASETS}"
-echo "  Methods:  ${METHODS[*]}"
-echo "  Output:   ${BASE_OUTPUT_DIR}"
-echo "  Time:     $(date)"
+echo "  Model:      ${EFF_MODEL}"
+echo "  Datasets:   ${EFF_DATASETS}"
+echo "  Methods:    ${METHODS[*]}"
+echo "  MaxSamples: ${MAX_SAMPLES:-all}"
+echo "  Output:     ${BASE_OUTPUT_DIR}"
+echo "  Time:       $(date)"
 echo "======================================================================"
 echo ""
 
@@ -93,6 +105,7 @@ for dataset in "${DATASET_ARRAY[@]}"; do
             --test_dataset_name "${dataset}" \
             --model_name "${EFF_MODEL}" \
             --output_path "${OUTPUT_FILE}" \
+            "${MAX_SAMPLES_ARGS[@]}" \
             "${OTHER_ARGS[@]}" || {
             echo "[WARNING] Inference ${method}/${dataset} failed, continuing..."
         }

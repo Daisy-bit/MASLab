@@ -43,6 +43,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_path", type=str, default=None, help="Path to the output file.")
     parser.add_argument("--require_val", action="store_true")
     
+    parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of samples to process (for quick testing).")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--sequential", action="store_true")
     args = parser.parse_args()
@@ -85,6 +86,8 @@ if __name__ == "__main__":
         
         # reserve unprocessed samples
         test_dataset = reserve_unprocessed_queries(output_path, test_dataset)
+        if args.max_samples is not None and len(test_dataset) > args.max_samples:
+            test_dataset = test_dataset[:args.max_samples]
         print(f">> After filtering: {len(test_dataset)} samples")
         
         # optimize mas if required (e.g., GPTSwarm, ADAS, and AFlow)
