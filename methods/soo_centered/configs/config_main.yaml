@@ -14,3 +14,5 @@ aggregate_mode: "weighted"   # "weighted" / "single"
 embedding_dim: 512
 consensus_range_eps: 0.1
 reform: true
+
+emb_model: model/all-MiniLM-L6-v2

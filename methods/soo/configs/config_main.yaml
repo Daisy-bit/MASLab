@@ -17,3 +17,5 @@ reform: true
 
 # SOO-specific: temperature for consensus matrix A_ij = exp(S_ij / consensus_tau)
 consensus_tau: 0.3
+
+emb_model: model/all-MiniLM-L6-v2

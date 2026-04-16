@@ -15,4 +15,4 @@ embedding_dim: 512
 consensus_range_eps: 0.1  # similarity spread
 reform: true
 
-# emb_model: "Qwen/Qwen3-Embedding-0.6B"
+emb_model: model/all-MiniLM-L6-v2

@@ -18,3 +18,5 @@ reform: true
 # SOO-Centered-v2 specific: total variance threshold for consensus detection.
 # If tr(S_c) < this, agents are in genuine consensus and debate is skipped.
 variance_consensus_thr: 0.05
+
+emb_model: model/all-MiniLM-L6-v2
