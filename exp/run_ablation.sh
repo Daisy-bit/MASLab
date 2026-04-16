@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ======================================================================
 #  SelfOrg / SOO 消融实验 — 一键运行
-#
+#  export HF_ENDPOINT=https://hf-mirror.com
 #  消融设计:
 #    1. selforg              — 完整 SelfOrg（DAG 辩论 + Shapley 贡献度）
 #    2. selforg_no_debate    — 仅首轮采样 + 质心选择（无辩论）
