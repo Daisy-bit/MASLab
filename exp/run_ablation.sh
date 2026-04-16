@@ -33,7 +33,7 @@ export TOKENIZERS_PARALLELISM=false
 # -------------------- 默认参数 --------------------
 DEFAULT_MODEL="qwen25-3b-instruct"
 DEFAULT_DATASETS="GSM8K GSM-Hard AIME-2024 AQUA-RAT MMLU-Pro"
-METHODS=(selforg selforg_no_debate selforg_random_graph soo soo_centered soo_centered_v2)
+METHODS=(selforg selforg_no_debate selforg_random_graph soo soo_centered soo_centered_v2 dylan_math dylan_mmlu)
 
 # -------------------- 解析命令行参数 --------------------
 EFF_MODEL="$DEFAULT_MODEL"
