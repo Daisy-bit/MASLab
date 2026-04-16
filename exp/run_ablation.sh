@@ -29,6 +29,9 @@ if [[ -f scripts/prepend_nvjitlink_ld_path.sh ]]; then
     source scripts/prepend_nvjitlink_ld_path.sh
 fi
 export TOKENIZERS_PARALLELISM=false
+# 禁止 sentence-transformers / huggingface_hub 联网检查更新（使用本地模型）
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 
 # -------------------- 默认参数 --------------------
 DEFAULT_MODEL="qwen25-3b-instruct"
