@@ -33,7 +33,11 @@ export TOKENIZERS_PARALLELISM=false
 # -------------------- 默认参数 --------------------
 DEFAULT_MODEL="qwen25-3b-instruct"
 DEFAULT_DATASETS="GSM8K GSM-Hard AIME-2024 AQUA-RAT MMLU-Pro"
-METHODS=(selforg selforg_no_debate selforg_random_graph soo soo_centered soo_centered_v2 dylan_math dylan_mmlu)
+# 核心对比方法（所有数据集都跑）
+CORE_METHODS=(selforg selforg_no_debate selforg_random_graph soo soo_centered soo_centered_v2)
+# 数学类数据集追加 dylan_math，选择题类数据集追加 dylan_mmlu
+MATH_DATASETS="GSM8K GSM-Hard AIME-2024 MATH"
+CHOICE_DATASETS="MMLU-Pro MMLU AQUA-RAT MedMCQA"
 
 # -------------------- 解析命令行参数 --------------------
 EFF_MODEL="$DEFAULT_MODEL"
@@ -79,7 +83,7 @@ echo "======================================================================"
 echo "  SelfOrg Ablation Experiments"
 echo "  Model:      ${EFF_MODEL}"
 echo "  Datasets:   ${EFF_DATASETS}"
-echo "  Methods:    ${METHODS[*]}"
+echo "  Methods:    ${CORE_METHODS[*]} + dylan_math/dylan_mmlu (auto)"
 echo "  MaxSamples: ${MAX_SAMPLES:-all}"
 echo "  Output:     ${BASE_OUTPUT_DIR}"
 echo "  Time:       $(date)"
@@ -93,7 +97,18 @@ for dataset in "${DATASET_ARRAY[@]}"; do
     DATASET_DIR="${BASE_OUTPUT_DIR}/${dataset}"
     mkdir -p "$DATASET_DIR"
 
-    echo "########## Dataset: ${dataset} ##########"
+    # 根据数据集类型选择 dylan 变体
+    DYLAN_METHOD=""
+    if echo " $MATH_DATASETS " | grep -qi " ${dataset} "; then
+        DYLAN_METHOD="dylan_math"
+    elif echo " $CHOICE_DATASETS " | grep -qi " ${dataset} "; then
+        DYLAN_METHOD="dylan_mmlu"
+    else
+        DYLAN_METHOD="dylan_math"   # 默认用 dylan_math
+    fi
+    METHODS=("${CORE_METHODS[@]}" "$DYLAN_METHOD")
+
+    echo "########## Dataset: ${dataset} (dylan: ${DYLAN_METHOD}) ##########"
     echo ""
 
     # ===== 阶段 1: 推理 =====
@@ -149,7 +164,19 @@ import json, os, sys
 
 base = '${BASE_OUTPUT_DIR}'
 datasets = '${EFF_DATASETS}'.split()
-methods = '${METHODS[*]}'.split()
+
+# 自动发现所有方法（从评估文件名中提取）
+method_set = set()
+for ds in datasets:
+    ds_dir = os.path.join(base, ds)
+    if not os.path.isdir(ds_dir):
+        continue
+    for f in os.listdir(ds_dir):
+        if f.endswith('_xverify_eval.jsonl'):
+            method_set.add(f.replace('_xverify_eval.jsonl', ''))
+# 排序：核心方法优先，dylan 放最后
+core_order = ['selforg', 'selforg_no_debate', 'selforg_random_graph', 'soo', 'soo_centered', 'soo_centered_v2']
+methods = [m for m in core_order if m in method_set] + sorted(method_set - set(core_order))
 
 header = f\"{'Method':<30}\" + ''.join(f'{d:>14}' for d in datasets) + f\"{'Average':>14}\"
 sep = '-' * len(header)
