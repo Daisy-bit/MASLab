@@ -36,6 +36,7 @@ DEFAULT_DATASETS="GSM8K GSM-Hard AIME-2024 AQUA-RAT MMLU-Pro"
 # 核心对比方法（所有数据集都跑）
 CORE_METHODS=(selforg selforg_no_debate selforg_random_graph soo soo_centered soo_centered_v2)
 # 数学类数据集追加 dylan_math，选择题类数据集追加 dylan_mmlu
+# 数学类数据集追加 dylan_math + soo_math，选择题类数据集追加 dylan_mmlu
 MATH_DATASETS="GSM8K GSM-Hard AIME-2024 MATH"
 CHOICE_DATASETS="MMLU-Pro MMLU AQUA-RAT MedMCQA"
 
@@ -98,17 +99,17 @@ for dataset in "${DATASET_ARRAY[@]}"; do
     mkdir -p "$DATASET_DIR"
 
     # 根据数据集类型选择 dylan 变体
-    DYLAN_METHOD=""
+    EXTRA_METHODS=()
     if echo " $MATH_DATASETS " | grep -qi " ${dataset} "; then
-        DYLAN_METHOD="dylan_math"
+        EXTRA_METHODS=(dylan_math soo_math)
     elif echo " $CHOICE_DATASETS " | grep -qi " ${dataset} "; then
-        DYLAN_METHOD="dylan_mmlu"
+        EXTRA_METHODS=(dylan_mmlu)
     else
-        DYLAN_METHOD="dylan_math"   # 默认用 dylan_math
+        EXTRA_METHODS=(dylan_math soo_math)
     fi
-    METHODS=("${CORE_METHODS[@]}" "$DYLAN_METHOD")
+    METHODS=("${CORE_METHODS[@]}" "${EXTRA_METHODS[@]}")
 
-    echo "########## Dataset: ${dataset} (dylan: ${DYLAN_METHOD}) ##########"
+    echo "########## Dataset: ${dataset} (extra: ${EXTRA_METHODS[*]}) ##########"
     echo ""
 
     # ===== 阶段 1: 推理 =====

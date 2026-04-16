@@ -39,3 +39,6 @@ final_anchor_rel_floor: 0.92
 
 # Inference trace (soo_math_v2 schema)
 trace_inference: true
+
+
+emb_model: model/all-MiniLM-L6-v2
