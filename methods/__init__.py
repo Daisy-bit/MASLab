@@ -18,6 +18,7 @@ from .selforg.selforg_random_graph import SelfOrg_RandomGraph
 from .soo import SOO_Main
 from .soo_centered import SOO_Centered_Main
 from .soo_centered_v2 import SOO_Centered_v2_Main
+from .soo_centered_v3 import SOO_Centered_v3_Main
 from .soo_math import SOO_Math_Main
 from .h_swarm import HSwarm_Main, HSwarm_MultiObj_Main
 
@@ -53,6 +54,7 @@ method2class = {
     "soo": SOO_Main,
     "soo_centered": SOO_Centered_Main,
     "soo_centered_v2": SOO_Centered_v2_Main,
+    "soo_centered_v3": SOO_Centered_v3_Main,
     "soo_math": SOO_Math_Main,
     "h_swarm": HSwarm_Main,
     "h_swarm_multiobj": HSwarm_MultiObj_Main,

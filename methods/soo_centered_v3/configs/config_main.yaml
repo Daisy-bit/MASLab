@@ -1,0 +1,44 @@
+method_name: soo_centered_v3
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 2
+consensus_min_sim: 0.95
+sim_threshold: 0.75
+
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "weighted"   # "weighted" / "single"
+embedding_dim: 512
+consensus_range_eps: 0.1
+reform: true
+
+# --- Inherited from v2 ---
+# Spectral total-variance consensus: if tr(S_c) < thr, agents are in genuine
+# semantic consensus even when no discrete answer match is found.
+variance_consensus_thr: 0.05
+
+# --- v3 additions ---
+# Answer-level plurality early stop: return the majority extracted answer
+# once this many agents agree. Matches soo_math's early_math_consensus_min_agents
+# behaviour and is the single biggest accuracy gain for math/MCQ tasks.
+answer_consensus_min_initial: 3
+answer_consensus_min_round: 3
+
+# Diversity injection on the contribution-based DAG: with this probability each
+# contribution-chosen peer is swapped for a random peer. Breaks echo chambers
+# that hurt MMLU-Pro style diverse-topic questions.
+diversity_p: 0.2
+
+# Task-aware prompting
+include_math_few_shot: true       # prepend DyLAN-style few-shot on math tasks
+math_mode: complex                # "simple" or "complex"
+include_mcq_format_hint: true     # require "(X)" answer tag for MCQ tasks
+
+# Task-type auto-detection override (leave null for automatic)
+# Acceptable values: "math", "mcq", "open", null
+force_task_type: null
+
+emb_model: model/all-MiniLM-L6-v2
