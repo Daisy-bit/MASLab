@@ -4,6 +4,7 @@
 #
 #  配置：A on + Sim 已硬编码关闭（v3 _check_for_consensus 只保留 spectral）
 #         diversity_p = 0（关闭 DAG 构建阶段的随机扰动，消除同 tau 下的方差）
+#         temperature = 0.7（锁定 LLM 采样温度，进一步控制噪声）
 #  扫描：tau ∈ {0, 0.05, 0.15, 0.35, 0.75, 1.50, 2.0}
 #
 #  翻译表（N=5, tr(S_c)=N(1-avg_cos^2)：
@@ -89,6 +90,10 @@ for tau in TAUS:
             # injection in the contribution DAG so all trials share the
             # same deterministic edge set.
             "diversity_p": 0.0,
+            # Pin LLM sampling temperature across all trials for the same
+            # reason. 0.7 was the empirical best in the earlier 108-trial
+            # product sweep (favoured by MMLU-Pro/AQUA-RAT).
+            "temperature": 0.7,
         },
     })
 
