@@ -3,6 +3,7 @@
 #  soo_centered_v3: --full 扫描谱共识阈值 variance_consensus_thr
 #
 #  配置：A on + Sim 已硬编码关闭（v3 _check_for_consensus 只保留 spectral）
+#         diversity_p = 0（关闭 DAG 构建阶段的随机扰动，消除同 tau 下的方差）
 #  扫描：tau ∈ {0, 0.05, 0.15, 0.35, 0.75, 1.50, 2.0}
 #
 #  翻译表（N=5, tr(S_c)=N(1-avg_cos^2)：
@@ -84,6 +85,10 @@ for tau in TAUS:
             "enable_answer_consensus": True,
             "enable_spectral_consensus": True,
             "variance_consensus_thr": float(tau),
+            # Isolate the spectral-threshold effect: disable diversity
+            # injection in the contribution DAG so all trials share the
+            # same deterministic edge set.
+            "diversity_p": 0.0,
         },
     })
 
