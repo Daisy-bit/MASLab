@@ -103,7 +103,6 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
         self.answer_consensus_min_round = int(mc.get("answer_consensus_min_round", 3))
         self.enable_answer_consensus = bool(mc.get("enable_answer_consensus", True))
         self.enable_spectral_consensus = bool(mc.get("enable_spectral_consensus", True))
-        self.enable_similarity_consensus = bool(mc.get("enable_similarity_consensus", True))
         self.diversity_p = float(mc.get("diversity_p", 0.2))
         self.include_math_few_shot = bool(mc.get("include_math_few_shot", True))
         self.math_mode = str(mc.get("math_mode", "complex")).lower()
@@ -479,17 +478,16 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
     # ------------------------------------------------------------------
 
     def _check_for_consensus(self, sims):
-        # Spectral branch (v2 signal).
+        # Only the spectral tr(S_c) signal is used. SelfOrg's raw pairwise-
+        # similarity consensus is disabled in v3 because the 2^3 early-stop
+        # ablation showed it interacts destructively with the other two
+        # checks (AAS=111 underperformed AAS=110 by ~2pp on mean accuracy).
         if (
             self.enable_spectral_consensus
             and self._last_spectral is not None
             and self._last_spectral["trace"] < self.variance_consensus_thr
         ):
             return True
-        # Similarity branch (SelfOrg base: all pairwise sims >= threshold
-        # AND tight range).
-        if self.enable_similarity_consensus:
-            return super(SOO_Centered_v2_Main, self)._check_for_consensus(sims)
         return False
 
     # ------------------------------------------------------------------

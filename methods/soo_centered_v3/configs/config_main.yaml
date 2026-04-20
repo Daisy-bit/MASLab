@@ -7,11 +7,6 @@ top_k: 2
 max_rounds: 2
 consensus_min_sim: 0.95
 sim_threshold: 0.75
-# Master switch for SelfOrg's pairwise-similarity consensus check
-# (all pairwise cosine sims >= consensus_min_sim and range <= consensus_range_eps).
-# When false, this similarity-based early-stop is disabled; spectral and
-# answer-level checks remain governed by their own toggles.
-enable_similarity_consensus: true
 
 temperature: 0.5
 enforce_dag: true

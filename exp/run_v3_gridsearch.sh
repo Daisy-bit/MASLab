@@ -134,7 +134,6 @@ COORD_SWEEPS = [
     ("aggregate_mode",               ["single"]),
     ("enable_answer_consensus",      [False]),
     ("enable_spectral_consensus",    [False]),
-    ("enable_similarity_consensus",  [False]),
 ]
 
 # 笛卡尔积: 围绕 v3 核心参数 + 采样温度 + 谱共识阈值
