@@ -7,6 +7,11 @@ top_k: 2
 max_rounds: 2
 consensus_min_sim: 0.95
 sim_threshold: 0.75
+# Master switch for SelfOrg's pairwise-similarity consensus check
+# (all pairwise cosine sims >= consensus_min_sim and range <= consensus_range_eps).
+# When false, this similarity-based early-stop is disabled; spectral and
+# answer-level checks remain governed by their own toggles.
+enable_similarity_consensus: true
 
 temperature: 0.5
 enforce_dag: true
@@ -19,6 +24,10 @@ reform: true
 # Spectral total-variance consensus: if tr(S_c) < thr, agents are in genuine
 # semantic consensus even when no discrete answer match is found.
 variance_consensus_thr: 0.05
+# Master switch for the spectral check (round 0 + mid-debate). When false
+# the tr(S_c) signal is ignored entirely; SelfOrg's similarity-based
+# consensus check remains active.
+enable_spectral_consensus: true
 
 # --- v3 additions ---
 # Answer-level plurality early stop: return the majority extracted answer
@@ -26,6 +35,10 @@ variance_consensus_thr: 0.05
 # behaviour and is the single biggest accuracy gain for math/MCQ tasks.
 answer_consensus_min_initial: 3
 answer_consensus_min_round: 3
+# Master switch for the symbolic-plurality check (round 0 + mid-debate).
+# When false the extracted-answer majority-vote early-exit is skipped and
+# the pipeline relies on spectral / debate-only termination.
+enable_answer_consensus: true
 
 # Diversity injection on the contribution-based DAG: with this probability each
 # contribution-chosen peer is swapped for a random peer. Breaks echo chambers

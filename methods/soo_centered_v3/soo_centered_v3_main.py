@@ -101,6 +101,9 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
         mc = self.method_config
         self.answer_consensus_min_initial = int(mc.get("answer_consensus_min_initial", 3))
         self.answer_consensus_min_round = int(mc.get("answer_consensus_min_round", 3))
+        self.enable_answer_consensus = bool(mc.get("enable_answer_consensus", True))
+        self.enable_spectral_consensus = bool(mc.get("enable_spectral_consensus", True))
+        self.enable_similarity_consensus = bool(mc.get("enable_similarity_consensus", True))
         self.diversity_p = float(mc.get("diversity_p", 0.2))
         self.include_math_few_shot = bool(mc.get("include_math_few_shot", True))
         self.math_mode = str(mc.get("math_mode", "complex")).lower()
@@ -426,13 +429,18 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
 
         # --- Early answer-level consensus (skip debate if strong majority) ---
         canonical, size = self._plurality(init_answers, contributions, task_type)
-        if canonical and size >= self.answer_consensus_min_initial:
+        if (
+            self.enable_answer_consensus
+            and canonical
+            and size >= self.answer_consensus_min_initial
+        ):
             return {"response": self._format_final(canonical, task_type)}
 
         # --- Spectral consensus (v2 signal): answers are semantically close
         #     even when no discrete extracted cluster reached threshold ---
         if (
-            self._last_spectral is not None
+            self.enable_spectral_consensus
+            and self._last_spectral is not None
             and self._last_spectral["trace"] < self.variance_consensus_thr
         ):
             return {
@@ -465,6 +473,24 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
 
         # Open-ended or extraction failed on every agent: centroid fallback.
         return {"response": self._aggregate_from(final_answers, contributions, task_type)}
+
+    # ------------------------------------------------------------------
+    # Consensus check override — honour the spectral toggle
+    # ------------------------------------------------------------------
+
+    def _check_for_consensus(self, sims):
+        # Spectral branch (v2 signal).
+        if (
+            self.enable_spectral_consensus
+            and self._last_spectral is not None
+            and self._last_spectral["trace"] < self.variance_consensus_thr
+        ):
+            return True
+        # Similarity branch (SelfOrg base: all pairwise sims >= threshold
+        # AND tight range).
+        if self.enable_similarity_consensus:
+            return super(SOO_Centered_v2_Main, self)._check_for_consensus(sims)
+        return False
 
     # ------------------------------------------------------------------
     # Helpers: aggregation / propagation
@@ -549,7 +575,11 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
 
             # Answer-level early stop mid-debate.
             canonical, size = self._plurality(current, contributions, task_type)
-            if canonical and size >= self.answer_consensus_min_round:
+            if (
+                self.enable_answer_consensus
+                and canonical
+                and size >= self.answer_consensus_min_round
+            ):
                 return current
 
             if self._check_for_consensus(sims):

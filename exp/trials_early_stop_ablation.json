@@ -1,0 +1,10 @@
+[
+  {"name": "gs_early_AAS_111", "overrides": {"enable_answer_consensus": true,  "enable_spectral_consensus": true,  "enable_similarity_consensus": true}},
+  {"name": "gs_early_AAS_110", "overrides": {"enable_answer_consensus": true,  "enable_spectral_consensus": true,  "enable_similarity_consensus": false}},
+  {"name": "gs_early_AAS_101", "overrides": {"enable_answer_consensus": true,  "enable_spectral_consensus": false, "enable_similarity_consensus": true}},
+  {"name": "gs_early_AAS_100", "overrides": {"enable_answer_consensus": true,  "enable_spectral_consensus": false, "enable_similarity_consensus": false}},
+  {"name": "gs_early_AAS_011", "overrides": {"enable_answer_consensus": false, "enable_spectral_consensus": true,  "enable_similarity_consensus": true}},
+  {"name": "gs_early_AAS_010", "overrides": {"enable_answer_consensus": false, "enable_spectral_consensus": true,  "enable_similarity_consensus": false}},
+  {"name": "gs_early_AAS_001", "overrides": {"enable_answer_consensus": false, "enable_spectral_consensus": false, "enable_similarity_consensus": true}},
+  {"name": "gs_early_AAS_000", "overrides": {"enable_answer_consensus": false, "enable_spectral_consensus": false, "enable_similarity_consensus": false}}
+]
