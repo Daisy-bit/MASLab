@@ -432,6 +432,144 @@ def write_csv(path: str, rows: List[List[str]]) -> None:
             w.writerow(r)
 
 
+# ---------------------------------------------------------------------------
+# Sample-level debug records (for bucket-assignment audit)
+# ---------------------------------------------------------------------------
+
+def write_sample_level_debug(per_dataset_records: Dict[str, List[Dict]],
+                             output_path: str) -> None:
+    """Flat per-sample JSONL with the user-spec fields for spot-checking
+    bucket assignments without re-running inference."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        for ds, records in per_dataset_records.items():
+            for i, rec in enumerate(records):
+                d = rec["diagnostic"]
+                rch = d.get("round_correct_history", [])
+                final_correct = list(rch[-1]) if rch else []
+                reh = d.get("round_extracted_history", [])
+                final_extracted = list(reh[-1]) if reh else []
+                debug_record = {
+                    "dataset": ds,
+                    "sample_id": f"{ds}_{i:05d}",
+                    "query": rec.get("query"),
+                    "gold_answer": d.get("gold_answer"),
+                    "initial_answers": [
+                        r["extracted_answer"] for r in d.get("initial_responses", [])
+                    ],
+                    "initial_correct_flags": [
+                        bool(r["is_correct"]) for r in d.get("initial_responses", [])
+                    ],
+                    "initial_vote": d.get("initial_vote"),
+                    "initial_vote_correct": bool(d.get("initial_vote_correct", False)),
+                    "initial_oracle_coverage": bool(d.get("initial_oracle_coverage", False)),
+                    "bucket": d.get("bucket"),
+                    "final_answers": final_extracted,
+                    "final_correct_flags": [bool(x) for x in final_correct],
+                    "final_vote": d.get("final_vote"),
+                    "final_vote_correct": bool(d.get("final_vote_correct", False)),
+                    "final_oracle_coverage": bool(d.get("final_oracle_coverage", False)),
+                }
+                f.write(json.dumps(debug_record, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Sanity checks (per exp/实验流程.md §6)
+# ---------------------------------------------------------------------------
+
+def run_sanity_checks(per_dataset_records: Dict[str, List[Dict]],
+                      tolerance: float = 1e-9) -> bool:
+    """Per-dataset PASS/FAIL print. Returns True iff every check passes."""
+    print("\n" + "=" * 30 + " Sanity Checks " + "=" * 30)
+    overall = True
+    for ds, records in per_dataset_records.items():
+        if not records:
+            print(f"\n{ds}: (no usable samples)")
+            continue
+        n_total = len(records)
+        n_already = sum(
+            1 for r in records if r["diagnostic"].get("initial_vote_correct")
+        )
+        n_coverage = sum(
+            1 for r in records if r["diagnostic"].get("initial_oracle_coverage")
+        )
+        n_recoverable = sum(
+            1 for r in records
+            if (not r["diagnostic"].get("initial_vote_correct")
+                and r["diagnostic"].get("initial_oracle_coverage"))
+        )
+        n_unrecoverable = sum(
+            1 for r in records
+            if not r["diagnostic"].get("initial_oracle_coverage")
+        )
+        # bucket-field mismatch check
+        n_bucket_already = sum(1 for r in records if r["diagnostic"].get("bucket") == "already_solved")
+        n_bucket_recoverable = sum(1 for r in records if r["diagnostic"].get("bucket") == "recoverable")
+        n_bucket_unrecoverable = sum(1 for r in records if r["diagnostic"].get("bucket") == "unrecoverable")
+
+        # Check 1
+        c1 = (n_already + n_recoverable + n_unrecoverable == n_total)
+        # Check 2
+        c2 = (n_recoverable == n_coverage - n_already)
+        # Check 3 (proportions)
+        oracle_cov = n_coverage / n_total if n_total else 0.0
+        ivote_acc = n_already / n_total if n_total else 0.0
+        rec_ratio = n_recoverable / n_total if n_total else 0.0
+        c3 = abs(rec_ratio - (oracle_cov - ivote_acc)) < tolerance
+        # Check 4 (tautology under our partition: n_already counts vote_correct)
+        c4 = True
+        # Check 5
+        c5 = (n_unrecoverable == n_total - n_coverage)
+        # Check 6 (bucket field matches partition)
+        c6 = (
+            n_bucket_already == n_already
+            and n_bucket_recoverable == n_recoverable
+            and n_bucket_unrecoverable == n_unrecoverable
+        )
+
+        all_pass = c1 and c2 and c3 and c4 and c5 and c6
+        if not all_pass:
+            overall = False
+
+        print(f"\n{ds}:")
+        print(f"  total                      = {n_total}")
+        print(
+            f"  already + recoverable + unrecoverable = "
+            f"{n_already}+{n_recoverable}+{n_unrecoverable}"
+            f"={n_already + n_recoverable + n_unrecoverable} "
+            f"{'PASS' if c1 else 'FAIL'}"
+        )
+        print(
+            f"  recoverable == coverage - already      : "
+            f"{n_recoverable} == {n_coverage} - {n_already} = {n_coverage - n_already} "
+            f"{'PASS' if c2 else 'FAIL'}"
+        )
+        print(
+            f"  recoverable_ratio == coverage - vote   : "
+            f"{rec_ratio:.6f} ~= {oracle_cov:.6f} - {ivote_acc:.6f} = "
+            f"{oracle_cov - ivote_acc:.6f} {'PASS' if c3 else 'FAIL'}"
+        )
+        print(
+            f"  unrecoverable == total - coverage      : "
+            f"{n_unrecoverable} == {n_total} - {n_coverage} = {n_total - n_coverage} "
+            f"{'PASS' if c5 else 'FAIL'}"
+        )
+        print(
+            f"  bucket-field counts match partition    : "
+            f"already={n_bucket_already}/{n_already} recoverable="
+            f"{n_bucket_recoverable}/{n_recoverable} unrecoverable="
+            f"{n_bucket_unrecoverable}/{n_unrecoverable} "
+            f"{'PASS' if c6 else 'FAIL'}"
+        )
+    print("\n" + "=" * 75)
+    print(f">> Overall sanity checks: {'PASS' if overall else 'FAIL'}")
+    return overall
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--infer_dir", required=True,
@@ -446,13 +584,19 @@ def main():
         "--filename_pattern", default="mad_vote_{dataset}_infer.jsonl",
         help="Per-dataset filename inside infer_dir. {dataset} is substituted.",
     )
+    parser.add_argument(
+        "--strict", action="store_true",
+        help="Exit with non-zero status if any sanity check fails.",
+    )
     args = parser.parse_args()
 
     per_dataset: Dict[str, List[Dict]] = {}
+    per_dataset_records: Dict[str, List[Dict]] = {}
     for ds in args.datasets:
         fname = args.filename_pattern.format(dataset=ds)
         path = os.path.join(args.infer_dir, fname)
         records = usable_records(load_jsonl(path))
+        per_dataset_records[ds] = records
         per_dataset[ds] = per_sample_metrics(records)
         print(f"  [{ds}] loaded {len(records)} usable samples from {path}")
 
@@ -470,6 +614,15 @@ def main():
     write_csv(os.path.join(args.output_dir, "table6_coverage_survival.csv"),
               build_table6(per_dataset))
     print(f">> Wrote 6 diagnostic tables under {args.output_dir}")
+
+    debug_path = os.path.join(args.output_dir, "diagnostic_sample_level_records.jsonl")
+    write_sample_level_debug(per_dataset_records, debug_path)
+    print(f">> Wrote per-sample debug JSONL to {debug_path}")
+
+    overall_pass = run_sanity_checks(per_dataset_records)
+    if args.strict and not overall_pass:
+        print("\n[ERROR] --strict mode: sanity checks failed; exiting with status 1.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

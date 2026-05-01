@@ -6,8 +6,14 @@
 # task_type: "auto" lets methods/mad_vote/extractor.py infer math/mcq from the
 # dataset name (DATASET_TASK_TYPE map). Set to "math" or "mcq" to force.
 #
-# Correctness (per agent, per round, per vote winner) is judged by xverify
-# LLM at runtime -- the endpoint named below MUST exist in
+# Correctness is judged by xverify but with a per-sample cache keyed on the
+# CANONICAL extracted answer (not the raw response). This preserves xverify's
+# accuracy while guaranteeing that the same canonical answer always gets the
+# same verdict, which in turn guarantees the three diagnostic buckets are
+# mutually exclusive and complete (vote-winner is one of the canonicals, so
+# vote_correct == is_correct of any agent who voted for the winner).
+#
+# The xverify endpoint named below MUST exist in
 # model_api_configs/model_api_config.json.
 
 agents_num: 5

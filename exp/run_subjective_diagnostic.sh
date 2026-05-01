@@ -117,8 +117,9 @@ for model in $MODELS; do
         --infer_dir "${MODEL_DIR}" \
         --output_dir "${TABLES_DIR}" \
         --datasets ${DATASETS} \
-        --filename_pattern "${METHOD_NAME}_{dataset}_infer.jsonl" || {
-        echo "[WARN] analysis failed for ${model}"
+        --filename_pattern "${METHOD_NAME}_{dataset}_infer.jsonl" \
+        --strict || {
+        echo "[WARN] analysis failed (or sanity checks failed) for ${model}"
     }
 done
 
