@@ -12,12 +12,12 @@
 #
 # 默认 5 数据集 × 3 个模型 (1.5b/3b/7b)，可通过环境变量覆盖。
 #
-# 用法：
-#   bash scripts/run_subjective_diagnostic.sh
-#   bash scripts/run_subjective_diagnostic.sh --max_samples 50
+# 用法（在 MASLab/ 项目根目录下执行）：
+#   bash exp/run_subjective_diagnostic.sh
+#   bash exp/run_subjective_diagnostic.sh --max_samples 50
 #   DATASETS="GSM8K AIME-2024" MODELS="qwen25-3b-instruct" \
-#     bash scripts/run_subjective_diagnostic.sh
-#   ANALYZE_ONLY=1 bash scripts/run_subjective_diagnostic.sh
+#     bash exp/run_subjective_diagnostic.sh
+#   ANALYZE_ONLY=1 bash exp/run_subjective_diagnostic.sh
 # ==============================================================================
 set -euo pipefail
 
