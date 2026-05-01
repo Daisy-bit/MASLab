@@ -1,0 +1,11 @@
+# Vanilla multi-agent debate with plurality-voting aggregation.
+#
+# 实验流程.md spec: N=5 agents, 3 fixed rounds, fully connected, no judge,
+# majority vote on extracted answers.
+#
+# task_type: "auto" lets methods/mad_vote/extractor.py infer math/mcq from the
+# dataset name (DATASET_TASK_TYPE map). Set to "math" or "mcq" to force.
+
+agents_num: 5
+rounds_num: 3
+task_type: auto

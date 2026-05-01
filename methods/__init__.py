@@ -21,6 +21,7 @@ from .soo_centered_v2 import SOO_Centered_v2_Main
 from .soo_centered_v3 import SOO_Centered_v3_Main
 from .soo_math import SOO_Math_Main
 from .h_swarm import HSwarm_Main, HSwarm_MultiObj_Main
+from .mad_vote import MAD_Vote_Main
 
 method2class = {
     "vanilla": MAS,
@@ -58,6 +59,7 @@ method2class = {
     "soo_math": SOO_Math_Main,
     "h_swarm": HSwarm_Main,
     "h_swarm_multiobj": HSwarm_MultiObj_Main,
+    "mad_vote": MAD_Vote_Main,
 }
 
 def get_method_class(method_name, dataset_name=None):
