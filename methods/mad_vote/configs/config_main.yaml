@@ -5,7 +5,14 @@
 #
 # task_type: "auto" lets methods/mad_vote/extractor.py infer math/mcq from the
 # dataset name (DATASET_TASK_TYPE map). Set to "math" or "mcq" to force.
+#
+# Correctness (per agent, per round, per vote winner) is judged by xverify
+# LLM at runtime -- the endpoint named below MUST exist in
+# model_api_configs/model_api_config.json.
 
 agents_num: 5
 rounds_num: 3
 task_type: auto
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
