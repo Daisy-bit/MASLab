@@ -42,10 +42,12 @@ from __future__ import annotations
 import math
 import random
 import re
-from collections import defaultdict
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections import Counter, defaultdict
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import openai
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from methods.dylan.utils_math import get_examples
 from methods.soo_centered_v2 import SOO_Centered_v2_Main
@@ -55,6 +57,8 @@ from methods.soo_math.math_answer_utils import (
     plurality_answer_by_contribution as math_plurality,
     strip_string,
 )
+from methods.utils import handle_retry_error
+from evaluations.evaluate_xverify import format_prompt as _xverify_format_prompt
 
 
 # Source tags we treat as math (numeric / symbolic answer).
@@ -94,6 +98,11 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
     DAG/debate plumbing) is inherited unchanged.
     """
 
+    # Matches mad_vote so the diagnostic-record schema is identical and
+    # scripts/diagnostic/analyze_diagnostic.py can consume our JSONL via
+    # --filename_pattern soo_centered_v3_{dataset}_infer.jsonl.
+    JUDGE_PROTOCOL = "xverify-cached-on-canonical"
+
     def __init__(self, general_config, method_config_name=None):
         method_config_name = "config_main" if method_config_name is None else method_config_name
         super().__init__(general_config, method_config_name)
@@ -108,6 +117,18 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
         self.math_mode = str(mc.get("math_mode", "complex")).lower()
         self.include_mcq_format_hint = bool(mc.get("include_mcq_format_hint", True))
         self.force_task_type = mc.get("force_task_type", None)
+
+        # Ablation flags. Defaults preserve current SCC behavior so existing
+        # configs (config_main.yaml) are unchanged.
+        self.emit_diagnostic = bool(mc.get("emit_diagnostic", False))
+        self.enable_contribution_routing = bool(mc.get("enable_contribution_routing", True))
+        self.enable_contribution_aggregation = bool(mc.get("enable_contribution_aggregation", True))
+
+        # xverify settings (only used when emit_diagnostic=True).
+        self.xverify_model_name = mc.get("xverify_model_name", "xverify-9b-c")
+        self.xverify_max_tokens = int(mc.get("xverify_max_tokens", 64))
+        self.xverify_temperature = float(mc.get("xverify_temperature", 0.0))
+        self.dataset_name = general_config.get("test_dataset_name")
 
         self._few_shot_block = get_examples(self.math_mode) if self.include_math_few_shot else ""
 
@@ -316,6 +337,10 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
 
         def score(g):
             size = len(g)
+            if not self.enable_contribution_aggregation:
+                # Plain plurality: size only, deterministic first-cluster
+                # tie-break (so the output is reproducible across runs).
+                return (size, -groups.index(g))
             w = float(sum(contributions[i] for i, _ in g))
             return (size, w)
 
@@ -358,7 +383,19 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
         peer has a `diversity_p` probability of being swapped for a random
         non-self peer. Keeps self-organization as the default and injects
         selforg_random_graph's diversity benefit on the minority of edges.
+
+        Ablation hook: when `enable_contribution_routing` is False, build a
+        fully-connected graph (vanilla MAD topology) instead, bypassing both
+        contribution scoring and diversity injection. DAG enforcement still
+        applies so the topological ordering remains well-defined.
         """
+        if not self.enable_contribution_routing:
+            edges = {(j, i) for i in range(n) for j in range(n) if j != i}
+            edge_w = {e: 1.0 for e in edges}
+            if self.enforce_dag:
+                edges, edge_w = self._dagify(edges, edge_w)
+            return edges, edge_w
+
         helpful: List[List[int]] = []
         for i in range(n):
             scored = []
@@ -405,6 +442,9 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
     # ------------------------------------------------------------------
 
     def inference(self, sample):
+        if self.emit_diagnostic:
+            return self._inference_with_diagnostic(sample)
+
         query = sample["query"]
         reference = sample.get("reference", None)
         task_type = self._detect_task_type(sample)
@@ -471,6 +511,11 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
             return {"response": self._format_final(canonical, task_type)}
 
         # Open-ended or extraction failed on every agent: centroid fallback.
+        # Ablation: when conservative aggregation is disabled, skip the
+        # contribution-weighted centroid and just return the first agent's
+        # initial answer (deterministic, contribution-free fallback).
+        if not self.enable_contribution_aggregation:
+            return {"response": init_answers[0]}
         return {"response": self._aggregate_from(final_answers, contributions, task_type)}
 
     # ------------------------------------------------------------------
@@ -596,3 +641,707 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
                 ) or list(range(self.num_agents))
 
         return current
+
+    # ==================================================================
+    # Diagnostic emission (only invoked when emit_diagnostic=True).
+    # Schema mirrors methods/mad_vote/mad_vote_main.py:218-388 so the same
+    # analyzer (scripts/diagnostic/analyze_diagnostic.py) reads both.
+    # ==================================================================
+
+    @retry(
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        stop=stop_after_attempt(5),
+        retry_error_callback=handle_retry_error,
+    )
+    def _call_llm_with_usage(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> Tuple[str, int, int]:
+        """Token-tracking LLM call. Returns (response, prompt_tokens,
+        completion_tokens). Updates self.token_stats[model_name]."""
+        model_name = self.model_name
+        model_dict = random.choice(self.model_api_config[model_name]["model_list"])
+        backend_name, model_url, api_key = (
+            model_dict["model_name"],
+            model_dict["model_url"],
+            model_dict["api_key"],
+        )
+
+        messages: List[Dict[str, str]] = []
+        if system_prompt is not None:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        request_dict: Dict[str, Any] = {
+            "model": backend_name,
+            "messages": messages,
+            "max_tokens": self.model_max_tokens,
+            "timeout": self.model_timeout,
+        }
+        if "o1" not in backend_name:
+            request_dict["temperature"] = (
+                temperature if temperature is not None else self.model_temperature
+            )
+
+        llm = openai.OpenAI(base_url=model_url, api_key=api_key)
+        try:
+            completion = llm.chat.completions.create(**request_dict)
+            response = completion.choices[0].message.content
+            n_prompt = completion.usage.prompt_tokens
+            n_completion = completion.usage.completion_tokens
+        finally:
+            llm.close()
+
+        if not isinstance(response, str):
+            raise ValueError(f"Invalid response from LLM: {response}")
+
+        if backend_name not in self.token_stats:
+            self.token_stats[backend_name] = {
+                "num_llm_calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            }
+        self.token_stats[backend_name]["num_llm_calls"] += 1
+        self.token_stats[backend_name]["prompt_tokens"] += n_prompt
+        self.token_stats[backend_name]["completion_tokens"] += n_completion
+
+        return response, n_prompt, n_completion
+
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(5),
+        retry_error_callback=handle_retry_error,
+    )
+    def _call_xverify(
+        self, query: str, response_text: Optional[str], gt
+    ) -> Tuple[bool, str]:
+        if response_text is None or str(response_text).strip() == "":
+            return False, "empty-response"
+        if self.xverify_model_name not in self.model_api_config:
+            raise RuntimeError(
+                f"xverify model '{self.xverify_model_name}' not found in "
+                "model_api_config; configure it in "
+                "model_api_configs/model_api_config.json"
+            )
+
+        prompt = _xverify_format_prompt(query, str(response_text), gt)
+        model_dict = random.choice(
+            self.model_api_config[self.xverify_model_name]["model_list"]
+        )
+        request_dict = {
+            "model": model_dict["model_name"],
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": self.xverify_max_tokens,
+            "temperature": self.xverify_temperature,
+            "timeout": self.model_timeout,
+        }
+        llm = openai.OpenAI(
+            base_url=model_dict["model_url"], api_key=model_dict["api_key"]
+        )
+        try:
+            completion = llm.chat.completions.create(**request_dict)
+            out = completion.choices[0].message.content
+            n_p = completion.usage.prompt_tokens
+            n_c = completion.usage.completion_tokens
+        finally:
+            llm.close()
+
+        if self.xverify_model_name not in self.token_stats:
+            self.token_stats[self.xverify_model_name] = {
+                "num_llm_calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            }
+        self.token_stats[self.xverify_model_name]["num_llm_calls"] += 1
+        self.token_stats[self.xverify_model_name]["prompt_tokens"] += n_p
+        self.token_stats[self.xverify_model_name]["completion_tokens"] += n_c
+
+        label = out.strip().lower() if isinstance(out, str) else ""
+        if label == "correct":
+            return True, "ok"
+        if label == "incorrect":
+            return False, "ok"
+        return False, f"unparseable:{label[:60]}"
+
+    def _judge_or_default(
+        self, query: str, response_text: Optional[str], gt
+    ) -> Tuple[bool, str]:
+        try:
+            result = self._call_xverify(query, response_text, gt)
+        except Exception as e:  # noqa: BLE001
+            return False, f"judge-error:{type(e).__name__}"
+        if result is None:
+            return False, "judge-error:retry-exhausted"
+        return result
+
+    def _canonical_response_text(
+        self, canonical: Optional[str], task_type: str
+    ) -> Optional[str]:
+        """Synthesise an 'answer-only' sentence so xverify sees a consistent
+        input form. Mirrors mad_vote but parametrised on task_type."""
+        if canonical is None:
+            return None
+        if task_type == "mcq":
+            return f"The answer is ({canonical})."
+        if task_type == "math":
+            return f"The answer is \\boxed{{{canonical}}}."
+        return str(canonical)
+
+    @staticmethod
+    def _normalize_extracted(ext) -> Optional[str]:
+        """SCC's `_extract_answer` returns "" on failure; the diagnostic
+        schema (and judge_cache) treats None as the failed-extraction key."""
+        if ext is None or (isinstance(ext, str) and ext.strip() == ""):
+            return None
+        return ext
+
+    def _pad_rounds(
+        self,
+        *,
+        start_round: int,
+        end_round: int,
+        canonical_extracted: List[Optional[str]],
+        canonical_correct_flags: List[bool],
+        vote: Optional[str],
+        vote_correct: bool,
+        vote_judge_status: str,
+        round_responses: Dict[str, List[Dict[str, Any]]],
+        round_vote_history: List[Optional[str]],
+        round_vote_correct_history: List[bool],
+        round_vote_judge_status: List[str],
+        round_extracted_history: List[List[Optional[str]]],
+        round_correct_history: List[List[bool]],
+    ) -> None:
+        """Pad rounds [start_round, end_round] with the converged state.
+
+        Rationale: SCC may early-stop after round k < max_rounds. To keep
+        round_vote_correct_history at a consistent length across samples
+        (so build_table5 in analyze_diagnostic.py reads a flat curve after
+        convergence), we synthesise no-LLM-call records that carry the
+        converged answer forward."""
+        for r in range(start_round, end_round + 1):
+            synthetic_records = []
+            for i in range(self.num_agents):
+                synthetic_records.append({
+                    "agent_id": i,
+                    "role": self.roles[i],
+                    "raw_response": "",
+                    "extracted_answer": canonical_extracted[i],
+                    "is_correct": canonical_correct_flags[i],
+                    "judge_status": "early-stop-padding",
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "tokens": 0,
+                })
+            round_responses[str(r)] = synthetic_records
+            round_vote_history.append(vote)
+            round_vote_correct_history.append(vote_correct)
+            round_vote_judge_status.append(vote_judge_status)
+            round_extracted_history.append(list(canonical_extracted))
+            round_correct_history.append(list(canonical_correct_flags))
+
+    def _build_diag_return(
+        self,
+        *,
+        gold,
+        task_type: str,
+        initial_records: List[Dict[str, Any]],
+        round_responses: Dict[str, List[Dict[str, Any]]],
+        initial_vote: Optional[str],
+        initial_vote_correct: bool,
+        initial_vote_judge_status: str,
+        initial_vote_counts: Dict[Any, int],
+        final_vote: Optional[str],
+        final_vote_correct: bool,
+        initial_oracle_coverage: bool,
+        final_oracle_coverage: bool,
+        round_vote_history: List[Optional[str]],
+        round_vote_correct_history: List[bool],
+        round_vote_judge_status: List[str],
+        round_extracted_history: List[List[Optional[str]]],
+        round_correct_history: List[List[bool]],
+        judge_cache: Dict[Optional[str], Tuple[bool, str]],
+        final_response: str,
+    ) -> Dict[str, Any]:
+        if initial_vote_correct:
+            bucket = "already_solved"
+        elif initial_oracle_coverage:
+            bucket = "recoverable"
+        else:
+            bucket = "unrecoverable"
+
+        total_tokens = sum(rec["tokens"] for rec in initial_records) + sum(
+            rec["tokens"]
+            for rec_list in round_responses.values()
+            for rec in rec_list
+        )
+
+        diagnostic: Dict[str, Any] = {
+            "dataset": self.dataset_name,
+            "task_type": task_type,
+            "agents_num": self.num_agents,
+            "rounds_num": self.max_rounds,
+            "judge_protocol": self.JUDGE_PROTOCOL,
+            "judge_model": self.xverify_model_name,
+            "gold_answer": gold,
+            "initial_responses": initial_records,
+            "round_responses": round_responses,
+            "initial_vote": initial_vote,
+            "initial_vote_correct": initial_vote_correct,
+            "initial_vote_judge_status": initial_vote_judge_status,
+            "initial_vote_counts": {
+                (k if k is not None else "__none__"): v
+                for k, v in initial_vote_counts.items()
+            },
+            "final_vote": final_vote,
+            "final_vote_correct": final_vote_correct,
+            "initial_oracle_coverage": initial_oracle_coverage,
+            "final_oracle_coverage": final_oracle_coverage,
+            "round_vote_history": round_vote_history,
+            "round_vote_correct_history": round_vote_correct_history,
+            "round_vote_judge_status": round_vote_judge_status,
+            "round_extracted_history": round_extracted_history,
+            "round_correct_history": round_correct_history,
+            "bucket": bucket,
+            "total_tokens": total_tokens,
+            "judge_cache_keys": [
+                ("__none__" if k is None else str(k)) for k in judge_cache.keys()
+            ],
+        }
+
+        response_str = final_response if final_response else (
+            final_vote if final_vote is not None else ""
+        )
+        return {"response": response_str, "diagnostic": diagnostic}
+
+    def _inference_with_diagnostic(self, sample: Dict) -> Dict:
+        """SCC inference with mad_vote-compatible diagnostic emission."""
+        # Local import: keeps the fast path free of mad_vote module load cost.
+        from methods.mad_vote.extractor import extract_gold
+
+        query = sample["query"]
+        gt = sample.get("gt")
+        reference = sample.get("reference", None)
+        task_type = self._detect_task_type(sample)
+        gold = extract_gold(gt, task_type) if task_type in ("math", "mcq") else gt
+
+        n = self.num_agents
+
+        judge_cache: Dict[Optional[str], Tuple[bool, str]] = {
+            None: (False, "no-extraction")
+        }
+
+        def grade_canonical(canonical: Optional[str]) -> Tuple[bool, str]:
+            if canonical in judge_cache:
+                return judge_cache[canonical]
+            response_text = self._canonical_response_text(canonical, task_type)
+            verdict = self._judge_or_default(query, response_text, gt)
+            judge_cache[canonical] = verdict
+            return verdict
+
+        # ---------------- Round 0 ----------------
+        init_answers: List[str] = []
+        initial_records: List[Dict[str, Any]] = []
+        prompt0 = self._init_prompt(query, task_type)
+        for i in range(n):
+            system_prompt = self.role_map.get(self.roles[i], self.role_map["Assistant"])
+            try:
+                resp, n_p, n_c = self._call_llm_with_usage(
+                    prompt=prompt0,
+                    system_prompt=system_prompt,
+                    temperature=self.temperature,
+                )
+            except Exception as e:  # noqa: BLE001
+                resp, n_p, n_c = f"[CALL_LLM_ERROR] {e}", 0, 0
+            init_answers.append(resp)
+            ext = self._normalize_extracted(self._extract_answer(resp, task_type))
+            is_correct, judge_status = grade_canonical(ext)
+            initial_records.append({
+                "agent_id": i,
+                "role": self.roles[i],
+                "raw_response": resp,
+                "extracted_answer": ext,
+                "is_correct": is_correct,
+                "judge_status": judge_status,
+                "prompt_tokens": n_p,
+                "completion_tokens": n_c,
+                "tokens": n_p + n_c,
+            })
+
+        initial_extracted: List[Optional[str]] = [r["extracted_answer"] for r in initial_records]
+        initial_correct_flags: List[bool] = [r["is_correct"] for r in initial_records]
+        initial_oracle_coverage = any(initial_correct_flags)
+
+        # Round-0 plurality (uniform-weighted; matches mad_vote.plurality_vote).
+        counts_dict: Dict[Any, int] = {}
+        first_pos: Dict[Any, int] = {}
+        for idx, ext in enumerate(initial_extracted):
+            key = ext if ext is not None else "__none__"
+            counts_dict[key] = counts_dict.get(key, 0) + 1
+            first_pos.setdefault(key, idx)
+        real_keys = [k for k in counts_dict if k != "__none__"]
+        if real_keys:
+            initial_vote = max(
+                real_keys,
+                key=lambda k: (counts_dict[k], -first_pos[k]),
+            )
+        else:
+            initial_vote = None
+        initial_vote_correct, initial_vote_judge_status = grade_canonical(initial_vote)
+        initial_vote_counts = counts_dict
+
+        # Round trackers (round 0 == initial).
+        round_responses: Dict[str, List[Dict[str, Any]]] = {}
+        round_vote_history: List[Optional[str]] = [initial_vote]
+        round_vote_correct_history: List[bool] = [initial_vote_correct]
+        round_vote_judge_status: List[str] = [initial_vote_judge_status]
+        round_extracted_history: List[List[Optional[str]]] = [list(initial_extracted)]
+        round_correct_history: List[List[bool]] = [list(initial_correct_flags)]
+
+        # Contributions (PC1 of S_c) and self._last_spectral side-effect.
+        contributions = self._approx_shapley(init_answers, None)
+
+        # ---- Branch A: answer-consensus early exit ----
+        canonical_a, size_a = self._plurality(init_answers, contributions, task_type)
+        if (
+            self.enable_answer_consensus
+            and canonical_a
+            and size_a >= self.answer_consensus_min_initial
+        ):
+            final_vote = canonical_a
+            final_vote_correct, final_vote_judge_status = grade_canonical(final_vote)
+            self._pad_rounds(
+                start_round=1, end_round=self.max_rounds,
+                canonical_extracted=initial_extracted,
+                canonical_correct_flags=initial_correct_flags,
+                vote=final_vote, vote_correct=final_vote_correct,
+                vote_judge_status=final_vote_judge_status,
+                round_responses=round_responses,
+                round_vote_history=round_vote_history,
+                round_vote_correct_history=round_vote_correct_history,
+                round_vote_judge_status=round_vote_judge_status,
+                round_extracted_history=round_extracted_history,
+                round_correct_history=round_correct_history,
+            )
+            final_oracle_coverage = initial_oracle_coverage
+            return self._build_diag_return(
+                gold=gold, task_type=task_type,
+                initial_records=initial_records, round_responses=round_responses,
+                initial_vote=initial_vote, initial_vote_correct=initial_vote_correct,
+                initial_vote_judge_status=initial_vote_judge_status,
+                initial_vote_counts=initial_vote_counts,
+                final_vote=final_vote, final_vote_correct=final_vote_correct,
+                initial_oracle_coverage=initial_oracle_coverage,
+                final_oracle_coverage=final_oracle_coverage,
+                round_vote_history=round_vote_history,
+                round_vote_correct_history=round_vote_correct_history,
+                round_vote_judge_status=round_vote_judge_status,
+                round_extracted_history=round_extracted_history,
+                round_correct_history=round_correct_history,
+                judge_cache=judge_cache,
+                final_response=self._format_final(final_vote, task_type),
+            )
+
+        # ---- Branch B: spectral early exit ----
+        if (
+            self.enable_spectral_consensus
+            and self._last_spectral is not None
+            and self._last_spectral["trace"] < self.variance_consensus_thr
+        ):
+            agg_response = self._aggregate_from(init_answers, contributions, task_type)
+            final_vote = self._normalize_extracted(
+                self._extract_answer(agg_response, task_type)
+            )
+            final_vote_correct, final_vote_judge_status = grade_canonical(final_vote)
+            self._pad_rounds(
+                start_round=1, end_round=self.max_rounds,
+                canonical_extracted=initial_extracted,
+                canonical_correct_flags=initial_correct_flags,
+                vote=final_vote, vote_correct=final_vote_correct,
+                vote_judge_status=final_vote_judge_status,
+                round_responses=round_responses,
+                round_vote_history=round_vote_history,
+                round_vote_correct_history=round_vote_correct_history,
+                round_vote_judge_status=round_vote_judge_status,
+                round_extracted_history=round_extracted_history,
+                round_correct_history=round_correct_history,
+            )
+            final_oracle_coverage = initial_oracle_coverage
+            return self._build_diag_return(
+                gold=gold, task_type=task_type,
+                initial_records=initial_records, round_responses=round_responses,
+                initial_vote=initial_vote, initial_vote_correct=initial_vote_correct,
+                initial_vote_judge_status=initial_vote_judge_status,
+                initial_vote_counts=initial_vote_counts,
+                final_vote=final_vote, final_vote_correct=final_vote_correct,
+                initial_oracle_coverage=initial_oracle_coverage,
+                final_oracle_coverage=final_oracle_coverage,
+                round_vote_history=round_vote_history,
+                round_vote_correct_history=round_vote_correct_history,
+                round_vote_judge_status=round_vote_judge_status,
+                round_extracted_history=round_extracted_history,
+                round_correct_history=round_correct_history,
+                judge_cache=judge_cache,
+                final_response=agg_response,
+            )
+
+        # ---- Branch C: instrumented debate ----
+        sims = self._pairwise_sims(init_answers)
+        edges, _edge_w = self._build_diverse_graph(sims, contributions, n)
+
+        final_answers, final_correct_flags = self._propagate_with_typed_prompts_with_diag(
+            query=query,
+            init_answers=init_answers,
+            initial_extracted=initial_extracted,
+            initial_correct_flags=initial_correct_flags,
+            edges=edges,
+            rounds=self.max_rounds,
+            contributions=list(contributions),
+            task_type=task_type,
+            grade_canonical=grade_canonical,
+            round_responses=round_responses,
+            round_vote_history=round_vote_history,
+            round_vote_correct_history=round_vote_correct_history,
+            round_vote_judge_status=round_vote_judge_status,
+            round_extracted_history=round_extracted_history,
+            round_correct_history=round_correct_history,
+        )
+
+        # ---- Final aggregation ----
+        final_contributions = self._approx_shapley(final_answers, reference)
+        canonical_f, _ = self._plurality(final_answers, final_contributions, task_type)
+        if canonical_f:
+            final_vote = canonical_f
+            final_response = self._format_final(canonical_f, task_type)
+        elif self.enable_contribution_aggregation:
+            final_response = self._aggregate_from(
+                final_answers, final_contributions, task_type
+            )
+            final_vote = self._normalize_extracted(
+                self._extract_answer(final_response, task_type)
+            )
+        else:
+            final_response = init_answers[0]
+            final_vote = self._normalize_extracted(
+                self._extract_answer(final_response, task_type)
+            )
+
+        final_vote_correct, _ = grade_canonical(final_vote)
+        final_oracle_coverage = any(final_correct_flags)
+
+        # Replace the LAST round's vote with the post-aggregation final_vote
+        # so round_vote_history[-1] reflects the actually-returned answer.
+        if round_vote_history:
+            round_vote_history[-1] = final_vote
+            round_vote_correct_history[-1] = final_vote_correct
+
+        return self._build_diag_return(
+            gold=gold, task_type=task_type,
+            initial_records=initial_records, round_responses=round_responses,
+            initial_vote=initial_vote, initial_vote_correct=initial_vote_correct,
+            initial_vote_judge_status=initial_vote_judge_status,
+            initial_vote_counts=initial_vote_counts,
+            final_vote=final_vote, final_vote_correct=final_vote_correct,
+            initial_oracle_coverage=initial_oracle_coverage,
+            final_oracle_coverage=final_oracle_coverage,
+            round_vote_history=round_vote_history,
+            round_vote_correct_history=round_vote_correct_history,
+            round_vote_judge_status=round_vote_judge_status,
+            round_extracted_history=round_extracted_history,
+            round_correct_history=round_correct_history,
+            judge_cache=judge_cache,
+            final_response=final_response,
+        )
+
+    def _propagate_with_typed_prompts_with_diag(
+        self,
+        *,
+        query,
+        init_answers: List[str],
+        initial_extracted: List[Optional[str]],
+        initial_correct_flags: List[bool],
+        edges,
+        rounds: int,
+        contributions: List[float],
+        task_type: str,
+        grade_canonical: Callable[[Optional[str]], Tuple[bool, str]],
+        round_responses: Dict[str, List[Dict[str, Any]]],
+        round_vote_history: List[Optional[str]],
+        round_vote_correct_history: List[bool],
+        round_vote_judge_status: List[str],
+        round_extracted_history: List[List[Optional[str]]],
+        round_correct_history: List[List[bool]],
+    ) -> Tuple[List[str], List[bool]]:
+        """Instrumented copy of `_propagate_with_typed_prompts`. Mutates the
+        round_* lists in-place; returns (final_answers, final_correct_flags)."""
+        current = list(init_answers)
+        current_extracted: List[Optional[str]] = list(initial_extracted)
+        current_correct_flags: List[bool] = list(initial_correct_flags)
+
+        adj_in: Dict[int, List[int]] = defaultdict(list)
+        for u, v in edges:
+            adj_in[v].append(u)
+
+        order = self._topo_order_by_contributions(edges, contributions) or list(
+            range(self.num_agents)
+        )
+
+        last_completed_round = 0
+
+        for _r in range(max(1, rounds)):
+            round_idx = _r + 1
+            per_agent_records: List[Dict[str, Any]] = [None] * self.num_agents  # type: ignore
+
+            # Carry-over records for non-leader agents with no predecessors.
+            for i in range(self.num_agents):
+                preds = adj_in.get(i, [])
+                is_leader = i == order[0]
+                if not preds and not is_leader:
+                    per_agent_records[i] = {
+                        "agent_id": i,
+                        "role": self.roles[i],
+                        "raw_response": current[i],
+                        "extracted_answer": current_extracted[i],
+                        "is_correct": current_correct_flags[i],
+                        "judge_status": "carry-over",
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "tokens": 0,
+                    }
+
+            # LLM calls in topological order.
+            for i in order:
+                preds = adj_in.get(i, [])
+                is_leader = i == order[0]
+                if not preds and not is_leader:
+                    continue
+
+                incoming = [(pid, current[pid]) for pid in preds]
+                own_response = current[i]
+                system_prompt = self.role_map.get(
+                    self.roles[i], self.role_map["Assistant"]
+                )
+
+                if is_leader and not preds:
+                    prompt = self._update_prompt_leader_agent(
+                        query, own_response, task_type
+                    )
+                else:
+                    prompt = self._update_prompt(
+                        query, own_response, incoming, task_type
+                    )
+
+                try:
+                    resp, n_p, n_c = self._call_llm_with_usage(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=self.temperature,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    resp, n_p, n_c = f"[CALL_LLM_ERROR] {e}", 0, 0
+                current[i] = resp
+                ext = self._normalize_extracted(self._extract_answer(resp, task_type))
+                is_correct, judge_status = grade_canonical(ext)
+                current_extracted[i] = ext
+                current_correct_flags[i] = is_correct
+
+                per_agent_records[i] = {
+                    "agent_id": i,
+                    "role": self.roles[i],
+                    "raw_response": resp,
+                    "extracted_answer": ext,
+                    "is_correct": is_correct,
+                    "judge_status": judge_status,
+                    "prompt_tokens": n_p,
+                    "completion_tokens": n_c,
+                    "tokens": n_p + n_c,
+                }
+
+            # Any leftover None slots indicate a topo-ordering miss; should not
+            # happen with enforce_dag, but guard against it for robustness.
+            for i in range(self.num_agents):
+                if per_agent_records[i] is None:
+                    per_agent_records[i] = {
+                        "agent_id": i,
+                        "role": self.roles[i],
+                        "raw_response": current[i],
+                        "extracted_answer": current_extracted[i],
+                        "is_correct": current_correct_flags[i],
+                        "judge_status": "skipped",
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "tokens": 0,
+                    }
+
+            round_responses[str(round_idx)] = per_agent_records
+
+            # Per-round contribution-weighted plurality vote.
+            sims = self._pairwise_sims(current)
+            contributions = self._approx_shapley(current, None)
+            canonical, size = self._plurality(current, contributions, task_type)
+
+            vote_r = canonical if canonical else None
+            vote_r_correct, vote_r_status = grade_canonical(vote_r)
+
+            round_vote_history.append(vote_r)
+            round_vote_correct_history.append(vote_r_correct)
+            round_vote_judge_status.append(vote_r_status)
+            round_extracted_history.append(list(current_extracted))
+            round_correct_history.append(list(current_correct_flags))
+
+            last_completed_round = round_idx
+
+            # Mid-debate early stop (answer consensus).
+            if (
+                self.enable_answer_consensus
+                and canonical
+                and size >= self.answer_consensus_min_round
+            ):
+                self._pad_rounds(
+                    start_round=last_completed_round + 1,
+                    end_round=self.max_rounds,
+                    canonical_extracted=current_extracted,
+                    canonical_correct_flags=current_correct_flags,
+                    vote=vote_r, vote_correct=vote_r_correct,
+                    vote_judge_status=vote_r_status,
+                    round_responses=round_responses,
+                    round_vote_history=round_vote_history,
+                    round_vote_correct_history=round_vote_correct_history,
+                    round_vote_judge_status=round_vote_judge_status,
+                    round_extracted_history=round_extracted_history,
+                    round_correct_history=round_correct_history,
+                )
+                return current, current_correct_flags
+
+            # Mid-debate early stop (spectral).
+            if self._check_for_consensus(sims):
+                self._pad_rounds(
+                    start_round=last_completed_round + 1,
+                    end_round=self.max_rounds,
+                    canonical_extracted=current_extracted,
+                    canonical_correct_flags=current_correct_flags,
+                    vote=vote_r, vote_correct=vote_r_correct,
+                    vote_judge_status=vote_r_status,
+                    round_responses=round_responses,
+                    round_vote_history=round_vote_history,
+                    round_vote_correct_history=round_vote_correct_history,
+                    round_vote_judge_status=round_vote_judge_status,
+                    round_extracted_history=round_extracted_history,
+                    round_correct_history=round_correct_history,
+                )
+                return current, current_correct_flags
+
+            if self.reform and (_r + 1) < rounds:
+                edges, _ew = self._build_diverse_graph(
+                    sims, contributions, self.num_agents
+                )
+                adj_in = defaultdict(list)
+                for u, v in edges:
+                    adj_in[v].append(u)
+                order = self._topo_order_by_contributions(
+                    edges, contributions
+                ) or list(range(self.num_agents))
+
+        return current, current_correct_flags
