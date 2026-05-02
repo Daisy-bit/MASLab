@@ -18,6 +18,8 @@
 #   DATASETS="GSM8K AIME-2024" MODELS="qwen25-3b-instruct" \
 #     bash exp/run_subjective_diagnostic.sh
 #   ANALYZE_ONLY=1 bash exp/run_subjective_diagnostic.sh
+#   ANALYZE_ONLY=1 ANALYZE_DIR=./results_diagnostic/run_20260101_120000 \
+#     bash exp/run_subjective_diagnostic.sh
 # ==============================================================================
 set -euo pipefail
 
@@ -41,13 +43,24 @@ DATASETS="${DATASETS:-$DATASETS_DEFAULT}"
 MODELS="${MODELS:-$MODELS_DEFAULT}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$OUTPUT_ROOT_DEFAULT}"
 ANALYZE_ONLY="${ANALYZE_ONLY:-0}"
+# 阶段 2 分析根目录：未设置则用本次 RUN_ROOT；设置后阶段 2 会改为分析该目录
+ANALYZE_DIR="${ANALYZE_DIR:-}"
 
 # 把命令行参数原样透传给 inference.py（如 --max_samples / --sequential 等）
 PASSTHROUGH_ARGS=("$@")
 
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RUN_ROOT="${OUTPUT_ROOT}/run_${TIMESTAMP}"
-mkdir -p "$RUN_ROOT"
+if [[ -n "$ANALYZE_DIR" && "$ANALYZE_ONLY" == "1" ]]; then
+    # 仅分析既有目录：复用其作为 RUN_ROOT，不再新建带时间戳的目录
+    RUN_ROOT="$ANALYZE_DIR"
+    if [[ ! -d "$RUN_ROOT" ]]; then
+        echo "[ERR] ANALYZE_DIR not found: ${RUN_ROOT}" >&2
+        exit 1
+    fi
+else
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    RUN_ROOT="${OUTPUT_ROOT}/run_${TIMESTAMP}"
+    mkdir -p "$RUN_ROOT"
+fi
 
 # 同时输出到日志文件，避免长跑丢日志
 LOG_FILE="${RUN_ROOT}/pipeline.log"
