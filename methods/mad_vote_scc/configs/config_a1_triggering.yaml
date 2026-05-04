@@ -1,0 +1,20 @@
+# Cluster A — variant A1: mad_vote + Spectral Consensus Triggering.
+# Triggering checks after every round (incl. round 0): if >=3 agents share the
+# same canonical answer OR tr(S_c) < 0.05, freeze the current plurality vote
+# as final and skip remaining rounds. Routing is unchanged (full mesh).
+
+agents_num: 5
+rounds_num: 3
+task_type: auto
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+enable_triggering: true
+enable_routing: false
+
+top_k: 2
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2

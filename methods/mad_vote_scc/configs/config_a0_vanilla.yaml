@@ -1,0 +1,23 @@
+# Cluster A — variant A0: Vanilla mad_vote routed through mad_vote_scc.
+# Behaviour identical to methods/mad_vote/configs/config_main.yaml because
+# both flags are off. Round-0 prompt set, peer mesh, fixed 3-round debate are
+# all unchanged. Used as the within-cluster baseline.
+
+agents_num: 5
+rounds_num: 3
+task_type: auto
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+# SCC modules (both off => vanilla MAD).
+enable_triggering: false
+enable_routing: false
+
+# Module hyperparameters (irrelevant when both flags are off, but kept here
+# so the four variant yamls share an identical schema).
+top_k: 2
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2

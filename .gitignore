@@ -178,9 +178,13 @@ model_api_configs/
 
 # Ablation results
 results_ablation/
+results_ablation_*/
 
 # Diagnostic experiment outputs (mad_vote run JSONL + per-run tables)
 results_diagnostic/
+results_diagnostic_*/
+
+paper_tables/
 
 # Large binary files
 *.pdf
