@@ -1,4 +1,6 @@
-# Cluster A — variant A3: mad_vote + Triggering + Routing (full SCC overlay).
+# Cluster A — variant A4: mad_vote + all three SCC modules (full overlay).
+# Spectral/answer-plurality Triggering + contribution-guided top-k DAG Routing
+# + contribution-weighted Aggregation. The headline "SCC-on-mad_vote" cell.
 
 agents_num: 5
 rounds_num: 3
@@ -10,6 +12,7 @@ xverify_temperature: 0.0
 
 enable_triggering: true
 enable_routing: true
+enable_weighted_aggregation: true
 
 top_k: 2
 variance_consensus_thr: 0.05

@@ -1,18 +1,18 @@
 """
 Assemble Cluster A paper tables (A1 + A2) from a single
-results_madvote_scc/run_<TS>/<model>/ run with four variant subdirs:
-    A0_vanilla / A1_triggering / A2_routing / A3_both
+results_madvote_scc/run_<TS>/<model>/ run with five variant subdirs:
+    A0_vanilla / A1_triggering / A2_routing / A3_aggregation / A4_all
 
 Each variant subdir is expected to already contain `_tables/table*.csv`
 produced by `scripts/diagnostic/analyze_diagnostic.py`.
 
 Outputs (under --out_dir, default `paper_tables/`):
-    <prefix>_A1_<label>.csv / .md   — 4-row main table
+    <prefix>_A1_<label>.csv / .md   — 5-row main table
         Model | Variant | Acc | Already-flip | Recoverable Recovery |
         Unrecoverable Success | Coverage Drop | Tokens
     <prefix>_A2_<label>.csv / .md   — per-dataset detail table for one model
-        Dataset | A0 Acc | A1 Acc | A2 Acc | A3 Acc | Δ A3 vs A0 |
-        A0 Tokens | A3 Tokens | Token saving %
+        Dataset | A0 Acc | A1 Acc | A2 Acc | A3 Acc | A4 Acc |
+        Δ A4 vs A0 | A0 Tokens | A4 Tokens | Token saving %
 
 All percentages use the per-dataset macro average reported by
 analyze_diagnostic's "Avg." row in table2 / table6, so the numbers are
@@ -36,11 +36,12 @@ from typing import Any, Dict, List, Optional
 
 
 VARIANT_DEFS = [
-    # (subdir_name,    table-row label)
-    ("A0_vanilla",     "A0 vanilla"),
-    ("A1_triggering",  "A1 +Trig"),
-    ("A2_routing",     "A2 +Rout"),
-    ("A3_both",        "A3 +Both"),
+    # (subdir_name,      table-row label)
+    ("A0_vanilla",       "A0 vanilla"),
+    ("A1_triggering",    "A1 +Trig"),
+    ("A2_routing",       "A2 +Rout"),
+    ("A3_aggregation",   "A3 +Aggr"),
+    ("A4_all",           "A4 +All"),
 ]
 
 DEFAULT_DATASETS = ["GSM8K", "GSM-Hard", "AIME-2024", "AQUA-RAT", "MMLU-Pro"]
@@ -267,33 +268,33 @@ def main() -> None:
     a2_header = (
         ["Dataset"]
         + [f"{label} Acc" for _, label in VARIANT_DEFS]
-        + ["Δ A3 vs A0", "A0 Tokens", "A3 Tokens", "Token saving %"]
+        + ["Δ A4 vs A0", "A0 Tokens", "A4 Tokens", "Token saving %"]
     )
     a2_rows: List[List[str]] = [a2_header]
     a0 = variant_data["A0_vanilla"]
-    a3 = variant_data["A3_both"]
+    a4 = variant_data["A4_all"]
     for ds in args.datasets:
         row: List[str] = [ds]
         for var_dir, _label in VARIANT_DEFS:
             row.append(_fmt_pct(variant_data[var_dir]["per_ds_acc"].get(ds)))
         a0_acc = a0["per_ds_acc"].get(ds)
-        a3_acc = a3["per_ds_acc"].get(ds)
+        a4_acc = a4["per_ds_acc"].get(ds)
         delta = (
-            (a3_acc - a0_acc)
-            if (a0_acc is not None and a3_acc is not None)
+            (a4_acc - a0_acc)
+            if (a0_acc is not None and a4_acc is not None)
             else None
         )
         a0_tok = a0["per_ds_tokens"].get(ds)
-        a3_tok = a3["per_ds_tokens"].get(ds)
+        a4_tok = a4["per_ds_tokens"].get(ds)
         saving = (
-            (1.0 - a3_tok / a0_tok) * 100.0
-            if (a0_tok is not None and a3_tok is not None and a0_tok > 0)
+            (1.0 - a4_tok / a0_tok) * 100.0
+            if (a0_tok is not None and a4_tok is not None and a0_tok > 0)
             else None
         )
         row += [
             _fmt_pct(delta),
             _fmt_int(a0_tok),
-            _fmt_int(a3_tok),
+            _fmt_int(a4_tok),
             _fmt_pct(saving),
         ]
         a2_rows.append(row)

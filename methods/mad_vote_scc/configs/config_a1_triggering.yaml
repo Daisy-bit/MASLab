@@ -13,6 +13,7 @@ xverify_temperature: 0.0
 
 enable_triggering: true
 enable_routing: false
+enable_weighted_aggregation: false
 
 top_k: 2
 variance_consensus_thr: 0.05

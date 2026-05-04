@@ -2,16 +2,17 @@
 # ==============================================================================
 # Cluster A — 1.5B end-to-end pipeline (single shot):
 #
-#   Stage 1 (Inference)     : 4 variants x 5 datasets under
+#   Stage 1 (Inference)     : 5 variants x 5 datasets under
 #                             results_madvote_scc/run_<TS>/<variant>/
-#       A0_vanilla     -> mad_vote_scc with both flags off
-#       A1_triggering  -> +Spectral Consensus Triggering
-#       A2_routing     -> +Contribution-guided Top-k DAG Routing
-#       A3_both        -> +Triggering +Routing
+#       A0_vanilla       -> mad_vote_scc with all three flags off
+#       A1_triggering    -> +Spectral Consensus Triggering
+#       A2_routing       -> +Contribution-guided Top-k DAG Routing
+#       A3_aggregation   -> +Contribution-weighted Plurality Aggregation
+#       A4_all           -> +Triggering +Routing +Aggregation (full overlay)
 #
 #   Stage 2 (Per-variant analysis): writes table1..6 to <variant>/_tables/.
 #
-#   Stage 3 (Paper tables)  : aggregates A1 (4 rows) and A2 (5 datasets) into
+#   Stage 3 (Paper tables)  : aggregates A1 (5 rows) and A2 (5 datasets) into
 #                             paper_tables/madvote_scc_A1_1.5b.{csv,md}
 #                             paper_tables/madvote_scc_A2_1.5b.{csv,md}
 #
@@ -51,7 +52,8 @@ ALL_VARIANTS=(
     "A0_vanilla:config_a0_vanilla"
     "A1_triggering:config_a1_triggering"
     "A2_routing:config_a2_routing"
-    "A3_both:config_a3_both"
+    "A3_aggregation:config_a3_aggregation"
+    "A4_all:config_a4_all"
 )
 
 # Optional VARIANTS_FILTER: keep only entries whose VAR_ID is space-listed.

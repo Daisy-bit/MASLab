@@ -1,38 +1,48 @@
 """
-mad_vote_scc: Vanilla MAD (mad_vote) base + two optional SCC modules.
+mad_vote_scc: Vanilla MAD (mad_vote) base + three optional SCC modules.
 
-Two flags, each toggleable independently:
-  * enable_triggering : spectral-trace + answer-plurality early stop. After
-        round 0 (and after every subsequent round), check if the 5 agents have
-        reached genuine consensus. If yes, freeze the current round's plurality
-        vote as the final answer and skip all remaining rounds.
+Three flags, each toggleable independently:
+  * enable_triggering          : spectral-trace + answer-plurality early stop.
+        After round 0 (and after every subsequent round), check if the 5
+        agents have reached genuine consensus. If yes, freeze the current
+        round's plurality vote as the final answer and skip all remaining
+        rounds.
         Trigger reasons:
           - "answer_plurality" : >= answer_consensus_min agents share the same
             extracted canonical answer.
           - "spectral_trace"   : tr(S_c) < variance_consensus_thr where
             S_c = H S H is the double-centered cosine-similarity Gram matrix.
-  * enable_routing    : contribution-guided top-k DAG. Instead of the round
-        t -> t+1 fully-connected peer broadcast, each agent only sees the
-        top-k peers (excluding itself) ranked by PC1 contribution score.
+  * enable_routing             : contribution-guided top-k DAG. Instead of the
+        round t -> t+1 fully-connected peer broadcast, each agent only sees
+        the top-k peers (excluding itself) ranked by PC1 contribution score.
         diversity_p is hard-coded to 0 (no random swap).
-
-Both flags off => identical behaviour to methods/mad_vote (vanilla 5-agent,
-3-round, fully-connected MAD with plurality vote).
+  * enable_weighted_aggregation: contribution-weighted plurality. Round-0 and
+        every per-round vote tally each agent's canonical answer with weight
+        = its PC1 softmax contribution score (instead of uniform 1/N). When
+        all flags off, behaviour is identical to methods/mad_vote.
 
 Diagnostic output schema is a strict superset of mad_vote's, so existing
-scripts/diagnostic/analyze_diagnostic.py works without modification.
+scripts/diagnostic/analyze_diagnostic.py works without modification. The
+`scc_modules` field exposes which flags were active for this run, and
+`vote_weights_history` records the per-round contribution weights actually
+used for tallying (uniform 1/N when weighted aggregation is off).
 """
 
 from __future__ import annotations
 
 import math
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from methods.mad_vote.mad_vote_main import MAD_Vote_Main
-from methods.mad_vote.extractor import extract_answer, extract_gold, plurality_vote
+from methods.mad_vote.extractor import (
+    _normalize_number_str,
+    extract_answer,
+    extract_gold,
+    plurality_vote,
+)
 from methods.mad_vote.prompts import get_debate_user_prompt, get_initial_user_prompt
 
 
@@ -69,6 +79,9 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
         mc = self.method_config
         self.enable_triggering = bool(mc.get("enable_triggering", False))
         self.enable_routing = bool(mc.get("enable_routing", False))
+        self.enable_weighted_aggregation = bool(
+            mc.get("enable_weighted_aggregation", False)
+        )
         self.top_k = int(mc.get("top_k", 2))
         self.variance_consensus_thr = float(mc.get("variance_consensus_thr", 0.05))
         self.answer_consensus_min = int(mc.get("answer_consensus_min", 3))
@@ -161,6 +174,96 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
         return others[:k]
 
     # ------------------------------------------------------------------
+    # Aggregation: equal-weight vs contribution-weighted plurality.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _canonicalize(answer: Optional[str], task_type: str) -> Optional[str]:
+        """Same key derivation as mad_vote.extractor.plurality_vote so that
+        weighted and equal-weight tallies agree on what counts as the same
+        canonical answer."""
+        if answer is None:
+            return None
+        if task_type == "mcq":
+            return answer.strip().upper()
+        n = _normalize_number_str(answer)
+        return n if n is not None else answer.strip()
+
+    def _weighted_plurality(
+        self,
+        extracted: List[Optional[str]],
+        contributions: List[float],
+        task_type: str,
+    ) -> Tuple[Optional[str], Dict[Any, float], Dict[Any, int]]:
+        """Contribution-weighted plurality.
+
+        Each agent contributes its PC1 softmax score to the canonical it
+        produced; winner = argmax over canonicals of total weight. Ties
+        broken first by agent count (so a 3-agent canonical beats a 1-agent
+        canonical when their weights tie), then by first-seen position.
+        Records both `weights` and integer `counts` for diagnostic emit.
+        Returns the original (non-canonical) extracted string of the
+        first agent who voted for the winning canonical, so that downstream
+        canonical-keyed judge_cache lookups see the same canonical that any
+        agent already produced.
+        """
+        weights: Dict[Any, float] = {}
+        counts: Dict[Any, int] = {}
+        first_pos: Dict[Any, int] = {}
+        first_orig: Dict[Any, Optional[str]] = {}
+        order: List[Any] = []
+        n_agents = len(extracted)
+        for i, ext in enumerate(extracted):
+            key = self._canonicalize(ext, task_type)
+            if key not in weights:
+                weights[key] = 0.0
+                counts[key] = 0
+                first_pos[key] = i
+                first_orig[key] = ext
+                order.append(key)
+            w = (
+                float(contributions[i])
+                if i < len(contributions)
+                else (1.0 / n_agents if n_agents else 0.0)
+            )
+            weights[key] += w
+            counts[key] += 1
+        real = [k for k in order if k is not None]
+        if not real:
+            return None, weights, counts
+        winner_key = max(
+            real, key=lambda k: (weights[k], counts[k], -first_pos[k])
+        )
+        return first_orig[winner_key], weights, counts
+
+    def _vote(
+        self,
+        extracted: List[Optional[str]],
+        contributions: List[float],
+    ) -> Tuple[Optional[str], Dict[Any, int], Dict[Any, float]]:
+        """Dispatch round-r tallying.
+
+        Returns (winner_extracted, counts_dict, weights_dict) where:
+          - `counts_dict` always reports integer agent counts per canonical
+            (matches mad_vote.plurality_vote's second return), so existing
+            sanity checks keep working.
+          - `weights_dict` reports the contribution sums per canonical (or
+            uniform 1/N when aggregation is unweighted).
+        Winner: weighted plurality if `enable_weighted_aggregation`, else
+        the equal-weight plurality_vote() chosen by mad_vote.
+        """
+        n = len(extracted)
+        if self.enable_weighted_aggregation:
+            winner, weights, counts = self._weighted_plurality(
+                extracted, contributions, self.task_type
+            )
+            return winner, counts, weights
+        winner, counts = plurality_vote(extracted, self.task_type)
+        # Synthesise uniform 1/N weights so the diagnostic schema is symmetric.
+        uniform = (1.0 / n) if n else 0.0
+        weights = {k: float(v) * uniform for k, v in counts.items()}
+        return winner, counts, weights
+
+    # ------------------------------------------------------------------
     # Inference (overrides MAD_Vote_Main.inference).
     # ------------------------------------------------------------------
     def inference(self, sample: Dict) -> Dict:
@@ -215,14 +318,15 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
 
         initial_extracted = [r["extracted_answer"] for r in initial_records]
         initial_correct_flags = [r["is_correct"] for r in initial_records]
-        initial_vote, initial_vote_counts = plurality_vote(
-            initial_extracted, self.task_type
-        )
-        initial_vote_correct, initial_vote_judge_status = grade_canonical(initial_vote)
         initial_oracle_coverage = any(initial_correct_flags)
 
-        # Need spectral metrics if either flag is on.
-        need_spectral = self.enable_triggering or self.enable_routing
+        # Need spectral metrics if any of the three modules is on (weighted
+        # aggregation also depends on PC1 contributions).
+        need_spectral = (
+            self.enable_triggering
+            or self.enable_routing
+            or self.enable_weighted_aggregation
+        )
         if need_spectral:
             init_responses_for_emb = [r["raw_response"] for r in initial_records]
             trace_Sc_init, contributions, _ = self._spectral_analysis(
@@ -231,6 +335,13 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
         else:
             trace_Sc_init = 0.0
             contributions = [1.0 / max(1, len(initial_records))] * len(initial_records)
+
+        # Round-0 vote (uses fresh contributions when weighted aggregation
+        # is on, else equal-weight plurality identical to mad_vote).
+        initial_vote, initial_vote_counts, initial_vote_weights = self._vote(
+            initial_extracted, contributions
+        )
+        initial_vote_correct, initial_vote_judge_status = grade_canonical(initial_vote)
 
         # Trigger after round 0?
         triggered, trigger_reason = self._trigger_hit(initial_extracted, trace_Sc_init)
@@ -247,6 +358,7 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
         contributions_history: List[List[float]] = [list(contributions)]
         trigger_history: List[Optional[str]] = [trigger_reason]
         peers_used_history: List[List[List[int]]] = [[]]  # round 0 has no peers
+        vote_weights_history: List[Dict[Any, float]] = [dict(initial_vote_weights)]
 
         # ---------- Rounds 1..rounds_num ----------
         for r in range(1, self.rounds_num + 1):
@@ -262,6 +374,7 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
                 contributions_history.append(list(contributions_history[-1]))
                 trigger_history.append(None)
                 peers_used_history.append([])
+                vote_weights_history.append(dict(vote_weights_history[-1]))
                 continue
 
             # Snapshot peers' last-round responses BEFORE updating any context.
@@ -271,6 +384,8 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
             this_round_peers: List[List[int]] = []
             n_agents = len(agent_contexts)
             for i, ctx in enumerate(agent_contexts):
+                # Routing uses the PREVIOUS round's contributions (`contributions`
+                # is updated only at the end of this loop body).
                 peer_ids = self._select_peers(i, n_agents, contributions)
                 this_round_peers.append(list(peer_ids))
                 peer_responses = [last_round_responses[j] for j in peer_ids]
@@ -303,7 +418,19 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
             round_responses[str(r)] = this_round_records
             extracted_r = [rec["extracted_answer"] for rec in this_round_records]
             correct_r = [rec["is_correct"] for rec in this_round_records]
-            vote_r, _ = plurality_vote(extracted_r, self.task_type)
+
+            # Recompute spectral metrics on this round's outputs FIRST so the
+            # weighted vote can use fresh PC1 contributions.
+            if need_spectral:
+                cur_responses = [rec["raw_response"] for rec in this_round_records]
+                trace_r, contributions_r, _ = self._spectral_analysis(cur_responses)
+            else:
+                trace_r = 0.0
+                contributions_r = [1.0 / n_agents] * n_agents
+
+            vote_r, _vote_r_counts, vote_r_weights = self._vote(
+                extracted_r, contributions_r
+            )
             vote_r_correct, vote_r_status = grade_canonical(vote_r)
 
             round_vote_history.append(vote_r)
@@ -312,16 +439,9 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
             round_extracted_history.append(extracted_r)
             round_correct_history.append(correct_r)
             peers_used_history.append(this_round_peers)
-
-            # Update spectral metrics for next round's routing & triggering.
-            if need_spectral:
-                cur_responses = [rec["raw_response"] for rec in this_round_records]
-                trace_r, contributions_r, _ = self._spectral_analysis(cur_responses)
-            else:
-                trace_r = 0.0
-                contributions_r = [1.0 / n_agents] * n_agents
             trace_history.append(trace_r)
             contributions_history.append(contributions_r)
+            vote_weights_history.append(dict(vote_r_weights))
             contributions = contributions_r
 
             triggered, trigger_reason = self._trigger_hit(extracted_r, trace_r)
@@ -383,6 +503,7 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
             "scc_modules": {
                 "enable_triggering": self.enable_triggering,
                 "enable_routing": self.enable_routing,
+                "enable_weighted_aggregation": self.enable_weighted_aggregation,
                 "top_k": self.top_k,
                 "variance_consensus_thr": self.variance_consensus_thr,
                 "answer_consensus_min": self.answer_consensus_min,
@@ -392,6 +513,13 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
             "contributions_history": contributions_history,
             "trigger_history": trigger_history,
             "peers_used_history": peers_used_history,
+            "vote_weights_history": [
+                {
+                    (k if k is not None else "__none__"): v
+                    for k, v in d.items()
+                }
+                for d in vote_weights_history
+            ],
         }
 
         response_str = final_vote if final_vote is not None else ""

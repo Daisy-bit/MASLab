@@ -14,6 +14,7 @@ xverify_temperature: 0.0
 
 enable_triggering: false
 enable_routing: true
+enable_weighted_aggregation: false
 
 top_k: 2
 variance_consensus_thr: 0.05
