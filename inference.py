@@ -46,6 +46,18 @@ if __name__ == "__main__":
     parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of samples to process (for quick testing).")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--sequential", action="store_true")
+    # Optional shared initial-response pool. When supplied, methods that
+    # support it (currently mad_vote_scc) replay cached round-0 responses
+    # so all variants/seeds debate from the same initial answer pool.
+    parser.add_argument(
+        "--initial_pool_dir", type=str, default=None,
+        help="Directory containing per-dataset initial-response JSONL files.",
+    )
+    parser.add_argument(
+        "--initial_pool_filename_pattern", type=str,
+        default="mad_vote_{dataset}_infer.jsonl",
+        help="Filename pattern inside --initial_pool_dir; {dataset} is replaced.",
+    )
     args = parser.parse_args()
     
     general_config = vars(args)

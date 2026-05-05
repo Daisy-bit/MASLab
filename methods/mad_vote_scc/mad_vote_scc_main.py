@@ -30,7 +30,9 @@ used for tallying (uniform 1/N when weighted aggregation is off).
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -44,6 +46,47 @@ from methods.mad_vote.extractor import (
     plurality_vote,
 )
 from methods.mad_vote.prompts import get_debate_user_prompt, get_initial_user_prompt
+
+
+# ---------------------------------------------------------------------------
+# Shared initial-response pool. When the user supplies --initial_pool_dir,
+# round-0 LLM calls are skipped and we replay cached agent responses (and
+# their judge verdicts) so all variants/seeds start from an IDENTICAL
+# initial answer pool. This removes the bucket-distribution confound we
+# previously saw across A0..A4.
+# ---------------------------------------------------------------------------
+
+_INITIAL_POOL_CACHE: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+_INITIAL_POOL_LOCK = threading.Lock()
+
+
+def _load_initial_pool(path: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Parse a diagnostic JSONL file once, key it by `query`. Cache result
+    process-wide so concurrent inference threads don't re-parse the file."""
+    with _INITIAL_POOL_LOCK:
+        hit = _INITIAL_POOL_CACHE.get(path)
+        if hit is not None:
+            return hit
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("error"):
+                        continue
+                    diag = rec.get("diagnostic") or {}
+                    init = diag.get("initial_responses")
+                    q = rec.get("query")
+                    if init and q is not None:
+                        out[q] = init
+        _INITIAL_POOL_CACHE[path] = out
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +130,27 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
         self.answer_consensus_min = int(mc.get("answer_consensus_min", 3))
         self.emb_model_name = mc.get("emb_model", "model/all-MiniLM-L6-v2")
         self._emb_call_lock = threading.Lock()
+
+        # Optional shared initial-response pool. Both keys live on
+        # general_config so they propagate from inference.py CLI args
+        # without needing to extend the YAML schema.
+        init_dir = general_config.get("initial_pool_dir") or ""
+        init_pat = general_config.get(
+            "initial_pool_filename_pattern",
+            "mad_vote_{dataset}_infer.jsonl",
+        )
+        self.initial_pool: Optional[Dict[str, List[Dict[str, Any]]]] = None
+        if init_dir:
+            init_path = os.path.join(
+                init_dir, init_pat.format(dataset=self.dataset_name)
+            )
+            self.initial_pool = _load_initial_pool(init_path)
+            if not self.initial_pool:
+                print(
+                    f"[WARN] initial_pool_dir set but no usable records "
+                    f"found at {init_path}; falling back to fresh round-0 "
+                    f"sampling for dataset {self.dataset_name}."
+                )
 
     # ------------------------------------------------------------------
     # Spectral helpers (self-contained: no SelfOrg subclassing).
@@ -293,28 +357,63 @@ class MAD_Vote_SCC_Main(MAD_Vote_Main):
             agent_contexts.append(ctx)
 
         # ---------- Round 0 ----------
+        # Replay cached round-0 responses if a shared initial pool is
+        # configured AND has an entry for this exact query with the right
+        # number of agents. Otherwise fall back to live LLM calls.
+        cached_init: Optional[List[Dict[str, Any]]] = None
+        if self.initial_pool is not None:
+            entry = self.initial_pool.get(query)
+            if entry is not None and len(entry) == len(agent_contexts):
+                cached_init = entry
+
         initial_records = []
-        for i, ctx in enumerate(agent_contexts):
-            try:
-                resp, n_p, n_c = self._call_llm_with_usage(ctx)
-            except Exception as e:
-                resp, n_p, n_c = f"[CALL_LLM_ERROR] {e}", 0, 0
-            ctx.append({"role": "assistant", "content": resp})
-            ext = extract_answer(resp, self.task_type)
-            is_correct, judge_status = grade_canonical(ext)
-            initial_records.append(
-                {
-                    "agent_id": i,
-                    "role": self.roles[i]["name"],
-                    "raw_response": resp,
-                    "extracted_answer": ext,
-                    "is_correct": is_correct,
-                    "judge_status": judge_status,
-                    "prompt_tokens": n_p,
-                    "completion_tokens": n_c,
-                    "tokens": n_p + n_c,
-                }
-            )
+        if cached_init is not None:
+            for i, ctx in enumerate(agent_contexts):
+                rec = cached_init[i]
+                resp = rec.get("raw_response", "") or ""
+                ctx.append({"role": "assistant", "content": resp})
+                ext = rec.get("extracted_answer")
+                is_correct = bool(rec.get("is_correct", False))
+                judge_status = rec.get("judge_status", "ok-cached") or "ok-cached"
+                # Pre-populate judge_cache so downstream grade_canonical()
+                # calls on the same canonical hit cache and don't re-judge.
+                judge_cache[ext] = (is_correct, judge_status)
+                initial_records.append(
+                    {
+                        "agent_id": i,
+                        "role": rec.get("role", self.roles[i]["name"]),
+                        "raw_response": resp,
+                        "extracted_answer": ext,
+                        "is_correct": is_correct,
+                        "judge_status": judge_status,
+                        "prompt_tokens": int(rec.get("prompt_tokens", 0) or 0),
+                        "completion_tokens": int(rec.get("completion_tokens", 0) or 0),
+                        "tokens": int(rec.get("tokens", 0) or 0),
+                        "cached_initial": True,
+                    }
+                )
+        else:
+            for i, ctx in enumerate(agent_contexts):
+                try:
+                    resp, n_p, n_c = self._call_llm_with_usage(ctx)
+                except Exception as e:
+                    resp, n_p, n_c = f"[CALL_LLM_ERROR] {e}", 0, 0
+                ctx.append({"role": "assistant", "content": resp})
+                ext = extract_answer(resp, self.task_type)
+                is_correct, judge_status = grade_canonical(ext)
+                initial_records.append(
+                    {
+                        "agent_id": i,
+                        "role": self.roles[i]["name"],
+                        "raw_response": resp,
+                        "extracted_answer": ext,
+                        "is_correct": is_correct,
+                        "judge_status": judge_status,
+                        "prompt_tokens": n_p,
+                        "completion_tokens": n_c,
+                        "tokens": n_p + n_c,
+                    }
+                )
 
         initial_extracted = [r["extracted_answer"] for r in initial_records]
         initial_correct_flags = [r["is_correct"] for r in initial_records]

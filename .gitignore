@@ -185,6 +185,7 @@ results_diagnostic/
 results_diagnostic_*/
 
 paper_tables/
+results_*/
 
 # Large binary files
 *.pdf
