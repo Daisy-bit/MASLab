@@ -58,7 +58,11 @@ ANALYZE_ONLY="${ANALYZE_ONLY:-0}"
 ANALYZE_DIR="${ANALYZE_DIR:-}"
 VARIANTS_FILTER="${VARIANTS_FILTER:-}"
 POOL_DIR="${POOL_DIR:-results_archive/results_diagnostic/run_20260501_113709/qwen25-1.5b-instruct_rejudged}"
-POOL_PATTERN="${POOL_PATTERN:-mad_vote_{dataset}_infer.jsonl}"
+# NOTE: do NOT inline the default into ${POOL_PATTERN:-...} -- bash's
+# parameter expansion ends at the first '}', which would chop the literal
+# placeholder "{dataset}" and produce "mad_vote_{dataset_infer.jsonl}".
+POOL_PATTERN_DEFAULT='mad_vote_{dataset}_infer.jsonl'
+POOL_PATTERN="${POOL_PATTERN:-$POOL_PATTERN_DEFAULT}"
 
 ALL_VARIANTS=(
     "A0_vanilla:config_a0_vanilla"
