@@ -1,0 +1,37 @@
+# Cluster A — variant A0: Vanilla mad_vote routed through mad_vote_scc.
+# Behaviour identical to methods/mad_vote/configs/config_main.yaml because
+# all three SCC flags are off. Round-0 prompt set, peer mesh, fixed 3-round
+# debate, and equal-weight plurality vote are all unchanged. Used as the
+# within-cluster baseline.
+
+agents_num: 5
+rounds_num: 3
+task_type: auto
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+# SCC modules (all off => vanilla MAD).
+enable_triggering: false
+enable_routing: false
+enable_weighted_aggregation: false
+
+# Module hyperparameters (irrelevant when all flags are off, but kept here
+# so the five variant yamls share an identical schema).
+top_k: 2
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2
+
+# Routing knobs adopted from soo_centered_v3 reference (active only when
+# enable_routing: true). When enable_routing: false they're ignored.
+sim_threshold: 0.75
+diversity_p: 0.2
+enforce_dag: true
+
+# Equivalence protocol used for both triggering and aggregation grouping.
+# "task_aware" → math_is_equiv / mcq_is_equiv (v3-faithful, default).
+# "string"     → string canonicalisation, reproducing the legacy
+#                mad_vote_scc behaviour for direct comparison.
+equiv_protocol: task_aware

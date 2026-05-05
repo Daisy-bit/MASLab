@@ -1,0 +1,43 @@
+method_name: soo_scc
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 2
+consensus_min_sim: 0.95
+sim_threshold: 0.75
+
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "weighted"
+embedding_dim: 512
+consensus_range_eps: 0.1
+reform: true
+
+variance_consensus_thr: 0.05
+enable_spectral_consensus: true
+
+answer_consensus_min_initial: 3
+answer_consensus_min_round: 3
+enable_answer_consensus: true
+
+diversity_p: 0.2
+
+include_math_few_shot: true
+math_mode: complex
+include_mcq_format_hint: true
+force_task_type: null
+
+emb_model: model/all-MiniLM-L6-v2
+
+emit_diagnostic: true
+enable_contribution_routing: true
+# Ablation: plain plurality (size only, deterministic tie-break) and skip the
+# contribution-weighted centroid fallback. Falls back to init_answers[0] if
+# every agent fails extraction.
+enable_contribution_aggregation: false
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0

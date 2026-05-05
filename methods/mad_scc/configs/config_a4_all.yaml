@@ -1,0 +1,32 @@
+# Cluster A — variant A4: mad_vote + all three SCC modules (full overlay).
+# Spectral/answer-plurality Triggering + contribution-guided top-k DAG Routing
+# + contribution-weighted Aggregation. The headline "SCC-on-mad_vote" cell.
+
+agents_num: 5
+rounds_num: 3
+task_type: auto
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+enable_triggering: true
+enable_routing: true
+enable_weighted_aggregation: true
+
+top_k: 2
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2
+
+# Routing knobs adopted from soo_centered_v3 reference (active only when
+# enable_routing: true). When enable_routing: false they're ignored.
+sim_threshold: 0.75
+diversity_p: 0.2
+enforce_dag: true
+
+# Equivalence protocol used for both triggering and aggregation grouping.
+# "task_aware" → math_is_equiv / mcq_is_equiv (v3-faithful, default).
+# "string"     → string canonicalisation, reproducing the legacy
+#                mad_vote_scc behaviour for direct comparison.
+equiv_protocol: task_aware

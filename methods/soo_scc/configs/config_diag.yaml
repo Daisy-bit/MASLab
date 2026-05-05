@@ -1,0 +1,53 @@
+method_name: soo_scc
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 2
+consensus_min_sim: 0.95
+sim_threshold: 0.75
+
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "weighted"   # "weighted" / "single"
+embedding_dim: 512
+consensus_range_eps: 0.1
+reform: true
+
+# --- Inherited from v2 ---
+variance_consensus_thr: 0.05
+enable_spectral_consensus: true
+
+# --- v3 additions ---
+answer_consensus_min_initial: 3
+answer_consensus_min_round: 3
+enable_answer_consensus: true
+
+diversity_p: 0.2
+
+# Task-aware prompting
+include_math_few_shot: true
+math_mode: complex
+include_mcq_format_hint: true
+force_task_type: null
+
+emb_model: model/all-MiniLM-L6-v2
+
+# --- Diagnostic-emission settings ---
+# Emit the same `diagnostic` field as methods/mad_vote so
+# scripts/diagnostic/analyze_diagnostic.py can produce the regime tables.
+emit_diagnostic: true
+
+# Three SCC modules (all enabled = SCC-full):
+#   1. consensus-based triggering    -> enable_answer_consensus + enable_spectral_consensus
+#   2. contribution-guided routing   -> enable_contribution_routing
+#   3. conservative aggregation      -> enable_contribution_aggregation
+enable_contribution_routing: true
+enable_contribution_aggregation: true
+
+# xverify cache settings (must match mad_vote so the JUDGE_PROTOCOL string
+# 'xverify-cached-on-canonical' is consistent across methods).
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
