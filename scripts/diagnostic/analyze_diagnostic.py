@@ -27,7 +27,6 @@ import csv
 import json
 import math
 import os
-import random
 import sys
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -69,41 +68,19 @@ def usable_records(records: List[Dict]) -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap CI for binary mean (proportion).
+# Point estimate helpers.
 # ---------------------------------------------------------------------------
 
-def bootstrap_ci(values: List[float], n_iter: int = 2000, alpha: float = 0.05,
-                 seed: int = 0) -> Tuple[float, float, float]:
-    """Return (mean, lower, upper) for a sequence of 0/1 (or bounded float) values."""
+def mean_of(values: List[float]) -> float:
     if not values:
-        return float("nan"), float("nan"), float("nan")
-    n = len(values)
-    rng = random.Random(seed)
-    mean = sum(values) / n
-    if n < 5:
-        return mean, mean, mean
-    samples = []
-    for _ in range(n_iter):
-        s = 0.0
-        for _ in range(n):
-            s += values[rng.randrange(n)]
-        samples.append(s / n)
-    samples.sort()
-    lo_idx = max(0, int((alpha / 2) * n_iter))
-    hi_idx = min(n_iter - 1, int((1 - alpha / 2) * n_iter))
-    return mean, samples[lo_idx], samples[hi_idx]
+        return float("nan")
+    return sum(values) / len(values)
 
 
 def fmt_pct(x: float) -> str:
     if x != x:  # NaN
         return ""
     return f"{x * 100:.2f}"
-
-
-def fmt_pct_ci(mean: float, lo: float, hi: float) -> str:
-    if mean != mean:
-        return ""
-    return f"{mean * 100:.2f} [{lo * 100:.2f}, {hi * 100:.2f}]"
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +121,9 @@ def per_sample_metrics(records: List[Dict]) -> List[Dict]:
 
 
 def safe_mean(xs):
-    xs = [x for x in xs if x is not None]
+    # Filter both None and NaN so that empty-bucket datasets (e.g. AIME with
+    # zero already-solved samples) don't poison the macro-average.
+    xs = [x for x in xs if x is not None and x == x]
     if not xs:
         return float("nan")
     return sum(xs) / len(xs)
@@ -178,18 +157,18 @@ def build_table1(per_dataset: Dict[str, List[Dict]]) -> List[List[str]]:
             1.0 if (not s["initial_vote_correct"] and s["initial_coverage"]) else 0.0
             for s in samples
         ]
-        m_single, lo_s, hi_s = bootstrap_ci(single)
-        m_vote0, lo_v, hi_v = bootstrap_ci(vote0)
-        m_cov, lo_c, hi_c = bootstrap_ci(cov)
-        m_rec, lo_r, hi_r = bootstrap_ci(rec)
+        m_single = mean_of(single)
+        m_vote0 = mean_of(vote0)
+        m_cov = mean_of(cov)
+        m_rec = mean_of(rec)
         cov_minus_vote = m_cov - m_vote0
         rows.append([
             ds, str(len(samples)),
-            fmt_pct_ci(m_single, lo_s, hi_s),
-            fmt_pct_ci(m_vote0, lo_v, hi_v),
-            fmt_pct_ci(m_cov, lo_c, hi_c),
+            fmt_pct(m_single),
+            fmt_pct(m_vote0),
+            fmt_pct(m_cov),
             fmt_pct(cov_minus_vote),
-            fmt_pct_ci(m_rec, lo_r, hi_r),
+            fmt_pct(m_rec),
         ])
         agg_metrics["single"].append(m_single)
         agg_metrics["vote0"].append(m_vote0)
@@ -238,17 +217,17 @@ def build_table2(per_dataset: Dict[str, List[Dict]]) -> List[List[str]]:
         # Final MAD acc
         final_acc = [1.0 if s["final_vote_correct"] else 0.0 for s in samples]
 
-        m_flip, lo_f, hi_f = bootstrap_ci(flip)
-        m_rec, lo_r, hi_r = bootstrap_ci(recovery)
-        m_unrec, lo_u, hi_u = bootstrap_ci(unrec_success)
-        m_final, lo_fa, hi_fa = bootstrap_ci(final_acc)
+        m_flip = mean_of(flip)
+        m_rec = mean_of(recovery)
+        m_unrec = mean_of(unrec_success)
+        m_final = mean_of(final_acc)
 
         rows.append([
             ds, str(len(samples)),
-            fmt_pct_ci(m_flip, lo_f, hi_f) + (f" (n={len(already)})" if already else " (n=0)"),
-            fmt_pct_ci(m_rec, lo_r, hi_r) + (f" (n={len(rec)})" if rec else " (n=0)"),
-            fmt_pct_ci(m_unrec, lo_u, hi_u) + (f" (n={len(unrec)})" if unrec else " (n=0)"),
-            fmt_pct_ci(m_final, lo_fa, hi_fa),
+            fmt_pct(m_flip) + f" (n={len(already)})",
+            fmt_pct(m_rec) + f" (n={len(rec)})",
+            fmt_pct(m_unrec) + f" (n={len(unrec)})",
+            fmt_pct(m_final),
         ])
         agg["flip"].append(m_flip)
         agg["recover"].append(m_rec)
@@ -280,15 +259,15 @@ def build_table3(per_dataset: Dict[str, List[Dict]]) -> List[List[str]]:
         single = [s["single_acc"] for s in samples]
         vote0 = [1.0 if s["initial_vote_correct"] else 0.0 for s in samples]
         mad = [1.0 if s["final_vote_correct"] else 0.0 for s in samples]
-        m_s, lo_s, hi_s = bootstrap_ci(single)
-        m_v, lo_v, hi_v = bootstrap_ci(vote0)
-        m_m, lo_m, hi_m = bootstrap_ci(mad)
+        m_s = mean_of(single)
+        m_v = mean_of(vote0)
+        m_m = mean_of(mad)
         gain = m_m - m_v
         rows.append([
             ds, str(len(samples)),
-            fmt_pct_ci(m_s, lo_s, hi_s),
-            fmt_pct_ci(m_v, lo_v, hi_v),
-            fmt_pct_ci(m_m, lo_m, hi_m),
+            fmt_pct(m_s),
+            fmt_pct(m_v),
+            fmt_pct(m_m),
             fmt_pct(gain),
         ])
         agg["single"].append(m_s)
@@ -378,7 +357,7 @@ def build_table5(per_dataset: Dict[str, List[Dict]]) -> List[List[str]]:
                 hist = s.get("round_vote_correct_history", [])
                 if r < len(hist):
                     flags.append(1.0 if hist[r] else 0.0)
-            m, lo, hi = bootstrap_ci(flags)
+            m = mean_of(flags)
             per_round_acc.append(m)
             agg[r].append(m)
         row = [ds, str(len(samples))] + [fmt_pct(x) for x in per_round_acc]
@@ -399,14 +378,14 @@ def build_table6(per_dataset: Dict[str, List[Dict]]) -> List[List[str]]:
         final_cov = [1.0 if s["final_coverage"] else 0.0 for s in samples]
         with_init = [s for s in samples if s["initial_coverage"]]
         survival = [1.0 if s["final_coverage"] else 0.0 for s in with_init]
-        m_i, lo_i, hi_i = bootstrap_ci(init_cov)
-        m_f, lo_f, hi_f = bootstrap_ci(final_cov)
-        m_s, lo_s, hi_s = bootstrap_ci(survival)
+        m_i = mean_of(init_cov)
+        m_f = mean_of(final_cov)
+        m_s = mean_of(survival)
         rows.append([
             ds, str(len(samples)),
-            fmt_pct_ci(m_i, lo_i, hi_i),
-            fmt_pct_ci(m_f, lo_f, hi_f),
-            fmt_pct_ci(m_s, lo_s, hi_s) + (f" (n={len(with_init)})" if with_init else " (n=0)"),
+            fmt_pct(m_i),
+            fmt_pct(m_f),
+            fmt_pct(m_s) + f" (n={len(with_init)})",
         ])
         agg["init"].append(m_i)
         agg["final"].append(m_f)
