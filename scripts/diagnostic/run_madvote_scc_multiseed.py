@@ -57,6 +57,7 @@ VARIANT_TO_CONFIG = {
     "A2_routing":     "config_a2_routing",
     "A3_aggregation": "config_a3_aggregation",
     "A4_all":         "config_a4_all",
+    "A5_trig_rout":   "config_a5_trig_rout",
 }
 
 DEFAULT_DATASETS = ["GSM8K", "GSM-Hard", "AIME-2024", "AQUA-RAT", "MMLU-Pro"]

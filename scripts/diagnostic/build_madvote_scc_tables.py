@@ -42,6 +42,7 @@ VARIANT_DEFS = [
     ("A2_routing",       "A2 +Rout"),
     ("A3_aggregation",   "A3 +Aggr"),
     ("A4_all",           "A4 +All"),
+    ("A5_trig_rout",     "A5 +Trig+Rout"),
 ]
 
 DEFAULT_DATASETS = ["GSM8K", "GSM-Hard", "AIME-2024", "AQUA-RAT", "MMLU-Pro"]
