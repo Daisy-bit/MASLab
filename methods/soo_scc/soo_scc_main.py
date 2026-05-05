@@ -23,8 +23,11 @@ we eliminate the per-baseline reimplementation drift documented in
 
 from __future__ import annotations
 
+import json
+import os
+import threading
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -41,6 +44,44 @@ from methods.scc_components import (
 from methods.soo_centered_v3 import SOO_Centered_v3_Main
 
 
+# ---------------------------------------------------------------------------
+# Shared initial-response pool — same protocol as mad_scc / mad_vote_scc.
+# Diagnostic JSONLs from results_archive/results_diagnostic/... are valid
+# pool sources: each record's `diagnostic.initial_responses[i].raw_response`
+# is replayed verbatim as agent i's round-0 answer.
+# ---------------------------------------------------------------------------
+
+_INITIAL_POOL_CACHE: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+_INITIAL_POOL_LOCK = threading.Lock()
+
+
+def _load_initial_pool(path: str) -> Dict[str, List[Dict[str, Any]]]:
+    with _INITIAL_POOL_LOCK:
+        hit = _INITIAL_POOL_CACHE.get(path)
+        if hit is not None:
+            return hit
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("error"):
+                        continue
+                    diag = rec.get("diagnostic") or {}
+                    init = diag.get("initial_responses")
+                    q = rec.get("query")
+                    if init and q is not None:
+                        out[q] = init
+        _INITIAL_POOL_CACHE[path] = out
+        return out
+
+
 class SOO_SCC_Main(SOO_Centered_v3_Main):
     """v3-faithful baseline whose SCC component calls go through
     `methods.scc_components`. Diagnostic-emit path is inherited from v3."""
@@ -51,10 +92,77 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
         )
         super().__init__(general_config, method_config_name=method_config_name)
 
+        # Optional shared initial-response pool. When --initial_pool_dir is
+        # supplied to inference.py, round-0 LLM calls are skipped for any
+        # query that has a cached entry (matched by exact string).
+        init_dir = general_config.get("initial_pool_dir") or ""
+        init_pat = general_config.get(
+            "initial_pool_filename_pattern",
+            "mad_vote_{dataset}_infer.jsonl",
+        )
+        self.initial_pool: Optional[Dict[str, List[Dict[str, Any]]]] = None
+        if init_dir:
+            init_path = os.path.join(
+                init_dir, init_pat.format(dataset=self.dataset_name)
+            )
+            self.initial_pool = _load_initial_pool(init_path)
+            if not self.initial_pool:
+                print(
+                    f"[WARN] initial_pool_dir set but no usable records found at "
+                    f"{init_path}; falling back to fresh round-0 sampling for "
+                    f"{self.dataset_name}."
+                )
+
+        # State used by `_call_llm_with_usage` to replay the first n round-0
+        # responses from the cached pool when running the diagnostic-emit path.
+        self._round_0_replay: Optional[List[Dict[str, Any]]] = None
+        self._pool_replay_remaining: int = 0
+
+    # ------------------------------------------------------------------
+    # Override `_call_llm_with_usage` so the diagnostic-emit path inherited
+    # from v3 can be transparently replayed from the shared initial pool.
+    # The first `num_agents` calls of an inference (round 0) consume cached
+    # responses; subsequent calls (debate rounds) fall through to the real
+    # LLM. Default path uses self._call_llm and is handled separately in
+    # `inference()`.
+    # ------------------------------------------------------------------
+    def _call_llm_with_usage(self, prompt, system_prompt=None, temperature=None):
+        if self._round_0_replay is not None and self._pool_replay_remaining > 0:
+            idx = self.num_agents - self._pool_replay_remaining
+            rec = self._round_0_replay[idx]
+            self._pool_replay_remaining -= 1
+            if self._pool_replay_remaining <= 0:
+                self._round_0_replay = None
+                self._pool_replay_remaining = 0
+            return (
+                rec.get("raw_response", "") or "",
+                int(rec.get("prompt_tokens", 0) or 0),
+                int(rec.get("completion_tokens", 0) or 0),
+            )
+        return super()._call_llm_with_usage(
+            prompt=prompt, system_prompt=system_prompt, temperature=temperature
+        )
+
     # ------------------------------------------------------------------
     # Default inference path: rebuild on scc_components
     # ------------------------------------------------------------------
     def inference(self, sample):
+        # Prime round-0 replay state for both the default path (consumed
+        # below directly) and the diagnostic-emit path (consumed via the
+        # overridden `_call_llm_with_usage` above).
+        query0 = sample.get("query", "")
+        if self.initial_pool is not None:
+            entry0 = self.initial_pool.get(query0)
+            if entry0 is not None and len(entry0) >= self.num_agents:
+                self._round_0_replay = entry0
+                self._pool_replay_remaining = self.num_agents
+            else:
+                self._round_0_replay = None
+                self._pool_replay_remaining = 0
+        else:
+            self._round_0_replay = None
+            self._pool_replay_remaining = 0
+
         if self.emit_diagnostic:
             return self._inference_with_diagnostic(sample)
 
@@ -66,17 +174,28 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
 
         n = self.num_agents
 
-        # ---- Round 0: independent answers (LLM-local) ----
+        # ---- Round 0: replay shared pool if configured, else live LLM ----
+        cached_init: Optional[List[Dict[str, Any]]] = None
+        if self.initial_pool is not None:
+            entry = self.initial_pool.get(query)
+            if entry is not None and len(entry) >= n:
+                cached_init = entry
+
         init_answers: List[str] = []
-        prompt0 = self._init_prompt(query, task_type)
-        for i in range(n):
-            sysp = self.role_map.get(self.roles[i], self.role_map["Assistant"])
-            ans = self._call_llm(
-                prompt=prompt0,
-                system_prompt=sysp,
-                temperature=self.temperature,
-            )
-            init_answers.append(ans)
+        if cached_init is not None:
+            for i in range(n):
+                rec = cached_init[i]
+                init_answers.append(rec.get("raw_response", "") or "")
+        else:
+            prompt0 = self._init_prompt(query, task_type)
+            for i in range(n):
+                sysp = self.role_map.get(self.roles[i], self.role_map["Assistant"])
+                ans = self._call_llm(
+                    prompt=prompt0,
+                    system_prompt=sysp,
+                    temperature=self.temperature,
+                )
+                init_answers.append(ans)
 
         # ---- Spectral analysis via shared component ----
         embs = self._embed_many(init_answers)

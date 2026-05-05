@@ -1,0 +1,48 @@
+# Cluster A — variant A5: soo_scc + Triggering + Routing (no weighted Agg).
+# Pair ablation that isolates whether contribution-weighted aggregation is
+# the component responsible for A4's behaviour: A4 - A5 = pure aggregation
+# effect with Triggering + Routing controlled.
+
+method_name: soo_scc
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 2
+sim_threshold: 0.75
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "weighted"
+embedding_dim: 512
+consensus_min_sim: 0.95
+consensus_range_eps: 0.1
+reform: true
+
+variance_consensus_thr: 0.05
+
+enable_spectral_consensus: true
+enable_answer_consensus: true
+enable_contribution_routing: true
+enable_contribution_aggregation: false
+
+answer_consensus_min_initial: 3
+answer_consensus_min_round: 3
+
+diversity_p: 0.2
+
+include_math_few_shot: true
+math_mode: complex
+include_mcq_format_hint: true
+force_task_type: null
+
+emb_model: model/all-MiniLM-L6-v2
+
+# Force diagnostic emission so analyze_diagnostic.py can consume the JSONL
+# (mirrors mad_scc / mad_vote_scc schema).
+emit_diagnostic: true
+
+# xverify endpoint used by the diagnostic path's per-canonical judge cache.
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0

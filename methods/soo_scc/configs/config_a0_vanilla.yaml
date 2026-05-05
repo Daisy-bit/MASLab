@@ -1,0 +1,50 @@
+# Cluster A — variant A0: vanilla soo_centered_v3 baseline.
+# All four SCC flags off → behaves like a plain DAG-propagation MAD with
+# embedding-centroid aggregation. Used as the within-cluster baseline.
+
+method_name: soo_scc
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 2
+sim_threshold: 0.75
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "weighted"
+embedding_dim: 512
+consensus_min_sim: 0.95
+consensus_range_eps: 0.1
+reform: true
+
+variance_consensus_thr: 0.05
+
+# All SCC modules off.
+enable_spectral_consensus: false
+enable_answer_consensus: false
+enable_contribution_routing: false
+enable_contribution_aggregation: false
+
+answer_consensus_min_initial: 3
+answer_consensus_min_round: 3
+
+# Diversity injection on the contribution-DAG. Only consulted when
+# enable_contribution_routing: true.
+diversity_p: 0.2
+
+include_math_few_shot: true
+math_mode: complex
+include_mcq_format_hint: true
+force_task_type: null
+
+emb_model: model/all-MiniLM-L6-v2
+
+# Force diagnostic emission so analyze_diagnostic.py can consume the JSONL
+# (mirrors mad_scc / mad_vote_scc schema).
+emit_diagnostic: true
+
+# xverify endpoint used by the diagnostic path's per-canonical judge cache.
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
