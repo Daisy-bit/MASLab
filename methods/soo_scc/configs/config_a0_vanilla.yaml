@@ -8,7 +8,7 @@ roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist",
 
 num_agents: 5
 top_k: 2
-max_rounds: 2
+max_rounds: 3
 sim_threshold: 0.75
 temperature: 0.5
 enforce_dag: true
@@ -31,7 +31,7 @@ answer_consensus_min_round: 3
 
 # Diversity injection on the contribution-DAG. Only consulted when
 # enable_contribution_routing: true.
-diversity_p: 0.2
+diversity_p: 0.0
 
 include_math_few_shot: true
 math_mode: complex

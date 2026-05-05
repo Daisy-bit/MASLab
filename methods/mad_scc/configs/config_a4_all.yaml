@@ -22,7 +22,7 @@ emb_model: model/all-MiniLM-L6-v2
 # Routing knobs adopted from soo_centered_v3 reference (active only when
 # enable_routing: true). When enable_routing: false they're ignored.
 sim_threshold: 0.75
-diversity_p: 0.2
+diversity_p: 0.0
 enforce_dag: true
 
 # Equivalence protocol used for both triggering and aggregation grouping.
