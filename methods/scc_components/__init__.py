@@ -23,6 +23,8 @@ Public re-exports:
 
 from .task_typing import detect_task_type
 from .voting import (
+    bleu_cluster_groups,
+    code_is_equiv,
     count_first_plurality,
     extract_answer,
     format_final,
@@ -48,6 +50,8 @@ except ImportError:
 
 __all__ = [
     "detect_task_type",
+    "bleu_cluster_groups",
+    "code_is_equiv",
     "count_first_plurality",
     "extract_answer",
     "format_final",

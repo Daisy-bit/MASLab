@@ -22,7 +22,6 @@ from .soo_centered_v3 import SOO_Centered_v3_Main
 from .soo_math import SOO_Math_Main
 from .h_swarm import HSwarm_Main, HSwarm_MultiObj_Main
 from .mad_vote import MAD_Vote_Main
-from .mad_vote_scc import MAD_Vote_SCC_Main
 from .soo_scc import SOO_SCC_Main
 from .mad_scc import MAD_SCC_Main
 
@@ -63,7 +62,6 @@ method2class = {
     "h_swarm": HSwarm_Main,
     "h_swarm_multiobj": HSwarm_MultiObj_Main,
     "mad_vote": MAD_Vote_Main,
-    "mad_vote_scc": MAD_Vote_SCC_Main,
     "soo_scc": SOO_SCC_Main,
     "mad_scc": MAD_SCC_Main,
 }

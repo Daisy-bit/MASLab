@@ -29,6 +29,16 @@ _MCQ_SOURCES = {
     "gpqa",
 }
 
+# Source tags that produce code (HumanEval, MBPP). All routed through the
+# `code` task type so plurality uses BLEU + body normalisation and the final
+# canonical is returned verbatim (executable function).
+_CODE_SOURCES = {
+    "humaneval",
+    "human-eval",
+    "mbpp",
+    "mbpp-500",
+}
+
 # Regex: detect in-query MCQ options like "(A)...(B)..." or "A)... B)..."
 _MCQ_OPTION_RE = re.compile(r"(?:^|\n|\s)\(?([A-J])\)\s*\S")
 
@@ -45,19 +55,22 @@ def _query_looks_like_mcq(query: str) -> bool:
 def detect_task_type(
     sample: Dict, *, force_task_type: Optional[str] = None
 ) -> str:
-    """Return one of {"math", "mcq", "open"} for the given sample.
+    """Return one of {"math", "mcq", "code", "open"} for the given sample.
 
     Order of evidence:
       1. force_task_type override (if a recognised value)
       2. explicit num_choices on the sample
-      3. source tag membership in _MATH_SOURCES / _MCQ_SOURCES
+      3. source tag membership in _MATH_SOURCES / _MCQ_SOURCES / _CODE_SOURCES
          (for math sources, an MCQ-shaped query body promotes to mcq;
           AQUA-RAT is tagged math in MASLab but is multiple-choice)
-      4. fallback: sniff query body for option labels
+      4. presence of `test_list` / `entry_point` on the sample (HumanEval /
+         MBPP shape) when source is unset
+      5. fallback: sniff query body for option labels
     """
     if isinstance(force_task_type, str) and force_task_type.lower() in (
         "math",
         "mcq",
+        "code",
         "open",
     ):
         return force_task_type.lower()
@@ -68,10 +81,16 @@ def detect_task_type(
     source = str(sample.get("source", "")).strip().lower()
     if source in _MCQ_SOURCES:
         return "mcq"
+    if source in _CODE_SOURCES:
+        return "code"
     if source in _MATH_SOURCES:
         if _query_looks_like_mcq(sample.get("query", "")):
             return "mcq"
         return "math"
+
+    # Shape-based fallback for code samples without an explicit source tag.
+    if sample.get("test_list") or sample.get("entry_point"):
+        return "code"
 
     if _query_looks_like_mcq(sample.get("query", "")):
         return "mcq"

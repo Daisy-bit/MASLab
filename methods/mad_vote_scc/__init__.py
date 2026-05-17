@@ -1,1 +1,0 @@
-from .mad_vote_scc_main import MAD_Vote_SCC_Main
