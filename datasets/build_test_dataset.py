@@ -267,6 +267,97 @@ elif args.dataset_name == "SciBench":
     ]
     data_list = shuffle_and_sample(data_list, args.num2sample)
 
+elif args.dataset_name == "HumanEval":
+    load_dataset_path = args.dataset_path if args.dataset_path else "openai_humaneval"
+    dataset = load_dataset(load_dataset_path, split="test", trust_remote_code=True)
+    print(f"{'='*50}\n", dataset)
+    # HumanEval fields: task_id / prompt (signature + docstring) /
+    # entry_point / canonical_solution / test (def check(candidate): asserts
+    # + check(candidate)). `gt` is canonical_solution so analyse tools can
+    # still inspect a reference; evaluation runs `test` against the model
+    # response via evaluations/evaluate_code.py.
+    data_list = [
+        {
+            "query": example["prompt"],
+            "gt": example.get("canonical_solution"),
+            "entry_point": example["entry_point"],
+            "test": example["test"],
+            "tag": [args.dataset_name, "code"],
+            "source": args.dataset_name,
+        }
+        for example in dataset
+    ]
+    # HumanEval has 164 problems; keep all unless user explicitly subsamples.
+    if args.num2sample < len(data_list):
+        data_list = shuffle_and_sample(data_list, args.num2sample)
+
+elif args.dataset_name in ("MBPP", "MBPP-500"):
+    load_dataset_path = args.dataset_path if args.dataset_path else "google-research-datasets/mbpp"
+    dataset = load_dataset(load_dataset_path, "sanitized", split="test", trust_remote_code=True)
+    print(f"{'='*50}\n", dataset)
+    # MBPP sanitized fields: source_file / task_id / prompt (problem text) /
+    # code (canonical solution) / test_imports / test_list (list of asserts).
+    # We surface the signature + first test inside `query` so the agent
+    # sees both the spec and the expected call shape.
+    #
+    # entry_point is extracted from test_list[0] (`assert <name>(...)`) — NOT
+    # from the canonical code's first `def`, because MBPP canonicals
+    # sometimes define helper functions before the entry-point function. The
+    # test_list asserts always call the real entry point.
+    import re as _re
+    _DEF_LINE_RE = _re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(.*?\)\s*(?:->[^:]+)?\s*:")
+    _ASSERT_CALL_RE = _re.compile(r"assert\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    def _mbpp_entry_point(test_list, code):
+        # Primary: extract from `assert <func>(...)` in the first test.
+        for t in test_list or []:
+            m = _ASSERT_CALL_RE.search(str(t))
+            if m:
+                return m.group(1)
+        # Fallback: pick the LAST def in canonical (helper functions usually
+        # appear before the entry point in MBPP canonicals).
+        last_name = ""
+        for line in (code or "").splitlines():
+            m = _DEF_LINE_RE.match(line)
+            if m:
+                last_name = m.group(1)
+        return last_name
+    def _mbpp_signature_for(name, code):
+        # Find the matching `def <name>(...)` line in canonical code.
+        for line in (code or "").splitlines():
+            m = _DEF_LINE_RE.match(line)
+            if m and m.group(1) == name:
+                return line.strip().rstrip(":").rstrip()
+        return f"def {name}(...)"
+    def _mbpp_query(example, entry_point):
+        sig = _mbpp_signature_for(entry_point, example.get("code", ""))
+        head = example.get("prompt", example.get("text", ""))
+        tail = example.get("test_list", [])
+        first_test = tail[0] if tail else ""
+        return (
+            f"{head}\n\n"
+            f"Function signature:\n```python\n{sig}\n```\n\n"
+            f"Example test:\n```python\n{first_test}\n```"
+        )
+    data_list = []
+    for example in dataset:
+        entry_point = _mbpp_entry_point(
+            example.get("test_list", []), example.get("code", "")
+        )
+        if not entry_point:
+            continue
+        data_list.append({
+            "query": _mbpp_query(example, entry_point),
+            "gt": example.get("code"),
+            "entry_point": entry_point,
+            "test_list": example.get("test_list", []),
+            "test_setup_code": "\n".join(example.get("test_imports", [])) or "",
+            "tag": [args.dataset_name, "code"],
+            "source": args.dataset_name,
+        })
+    # MBPP sanitized has ~427 test items; user can keep all or subsample.
+    if args.num2sample < len(data_list):
+        data_list = shuffle_and_sample(data_list, args.num2sample)
+
 elif args.dataset_name == "AIME-2024":
     load_dataset_path = args.dataset_path if args.dataset_path else "Maxwell-Jia/AIME_2024"
     dataset = load_dataset(load_dataset_path, split="train", trust_remote_code=True)
