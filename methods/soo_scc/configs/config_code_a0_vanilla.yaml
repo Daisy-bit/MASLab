@@ -1,0 +1,51 @@
+# Cluster A (code) — variant A0: vanilla baseline for HumanEval / MBPP.
+# All SCC modules off. BLEU plurality runs at FINAL aggregation only (the
+# unreachable answer_consensus_min thresholds disable Gate A and the
+# mid-debate early stop, so the full max_rounds debate always executes).
+# When all candidates are syntactically invalid, falls back to init_answers[0].
+
+method_name: soo_scc
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 3
+sim_threshold: 0.75
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "weighted"
+embedding_dim: 512
+consensus_min_sim: 0.95
+consensus_range_eps: 0.1
+reform: true
+
+variance_consensus_thr: 0.05
+
+# Plurality ON (so final aggregation runs BLEU clustering) but with
+# unreachable thresholds → Gate A + mid-debate Gate A never fire.
+enable_answer_consensus: true
+answer_consensus_min_initial: 999
+answer_consensus_min_round: 999
+
+# All SCC modules off → baseline.
+enable_spectral_consensus: false
+enable_contribution_routing: false
+enable_contribution_aggregation: false
+
+diversity_p: 0.0
+
+# Code doesn't use math few-shot / mcq letter hints.
+include_math_few_shot: false
+math_mode: complex
+include_mcq_format_hint: false
+force_task_type: code
+
+emb_model: model/all-MiniLM-L6-v2
+
+# xverify cannot grade code; diagnostic emission stays off for code runs.
+# Downstream pass@1 comes from evaluations/evaluate_code.py.
+emit_diagnostic: false
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0

@@ -1,0 +1,48 @@
+# Cluster A (code) — variant A1: + Spectral Triggering only.
+# Plurality short-circuits (enable_answer_consensus=false on code → no Gate
+# A anywhere). Gate B (tr(S_c) consensus) runs; on hit, returns
+# _aggregate_from(aggregate_mode="single") = argmax-contribution agent's
+# code. Final aggregation also goes through argmax(contribution).
+
+method_name: soo_scc
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 3
+sim_threshold: 0.75
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "single"    # → argmax(contribution) in _aggregate_from
+embedding_dim: 512
+consensus_min_sim: 0.95
+consensus_range_eps: 0.1
+reform: true
+
+variance_consensus_thr: 0.05
+
+# Plurality OFF for code (zero plurality calls return non-empty).
+enable_answer_consensus: false
+answer_consensus_min_initial: 3
+answer_consensus_min_round: 3
+
+# Triggering module on, no routing, aggregation forced on so the argmax
+# fallback is used instead of init_answers[0].
+enable_spectral_consensus: true
+enable_contribution_routing: false
+enable_contribution_aggregation: true
+
+diversity_p: 0.0
+
+include_math_few_shot: false
+math_mode: complex
+include_mcq_format_hint: false
+force_task_type: code
+
+emb_model: model/all-MiniLM-L6-v2
+
+emit_diagnostic: false
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0

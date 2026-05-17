@@ -1,0 +1,35 @@
+# Cluster A (code) — variant A1: + Spectral Triggering only.
+# enable_triggering=true → on code, _trigger_hit fires only on the
+# tr(S_c) signal (size-based plurality check is skipped for code).
+# enable_answer_consensus=false → _vote returns argmax(contribution)
+# at every round; counts/weights dicts degenerate to size-1.
+
+agents_num: 5
+rounds_num: 3
+task_type: code
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+enable_triggering: true
+enable_routing: false
+enable_weighted_aggregation: false
+
+# Plurality OFF for code SCC variants.
+enable_answer_consensus: false
+
+top_k: 2
+variance_consensus_thr: 0.05
+answer_consensus_min: 3      # ignored on code (only spectral fires)
+emb_model: model/all-MiniLM-L6-v2
+
+sim_threshold: 0.75
+diversity_p: 0.0
+enforce_dag: true
+
+equiv_protocol: task_aware
+
+# Disable diagnostic emission (xverify cannot judge code; downstream pass@1
+# comes from evaluations/evaluate_code.py).
+emit_diagnostic: false

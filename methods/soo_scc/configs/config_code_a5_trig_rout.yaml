@@ -1,0 +1,54 @@
+# Cluster A (code) — variant A5: + Triggering + Routing, "no weighted
+# Aggregation" semantically. On math/MCQ, A5 distinguishes from A4 by
+# turning off enable_contribution_aggregation (plurality scoring becomes
+# (size, -idx) instead of (size, sum_contrib)).
+#
+# On code SCC variants plurality is fully off (enable_answer_consensus=
+# false), so the (size, sum_contrib) vs (size, -idx) distinction has no
+# semantic effect. We DO NOT set enable_contribution_aggregation=false
+# here because doing so would route the inference end-of-debate fallback
+# to init_answers[0] (round-0 agent 0 only), discarding all debate work
+# whenever Gate B does not fire. That is strictly worse than A0 and
+# inconsistent with mad_scc's A5_code (which always returns argmax via
+# _vote). Instead we keep argmax(contribution) aggregation enabled —
+# making A5 ≡ A4 on code (the aggregation axis collapses for code).
+
+method_name: soo_scc
+random_seed: 2025
+roles: ["Assistant", "Programmer", "Mathematician", "Economist", "Psychologist", "Historian"]
+
+num_agents: 5
+top_k: 2
+max_rounds: 3
+sim_threshold: 0.75
+temperature: 0.5
+enforce_dag: true
+aggregate_mode: "single"   # argmax(contribution) in _aggregate_from
+embedding_dim: 512
+consensus_min_sim: 0.95
+consensus_range_eps: 0.1
+reform: true
+
+variance_consensus_thr: 0.05
+
+enable_answer_consensus: false
+answer_consensus_min_initial: 3
+answer_consensus_min_round: 3
+
+enable_spectral_consensus: true
+enable_contribution_routing: true
+enable_contribution_aggregation: true   # ≡ A4 on code (aggregation axis collapses)
+
+diversity_p: 0.2
+
+include_math_few_shot: false
+math_mode: complex
+include_mcq_format_hint: false
+force_task_type: code
+
+emb_model: model/all-MiniLM-L6-v2
+
+emit_diagnostic: false
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
