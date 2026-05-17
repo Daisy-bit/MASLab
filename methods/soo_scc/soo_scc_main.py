@@ -171,6 +171,10 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
         task_type = detect_task_type(
             sample, force_task_type=self.force_task_type
         )
+        # entry_point is required for code-task BLEU body normalisation. Math
+        # / MCQ ignore it inside count_first_plurality. None is safe for
+        # samples that lack the field.
+        entry_point = sample.get("entry_point")
 
         n = self.num_agents
 
@@ -203,9 +207,15 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
         self._last_spectral = spec  # so v3-inherited _check_for_consensus works
 
         # ---- Early-exit gate A: answer-level plurality ----
+        # enable_plurality_for_code mirrors enable_answer_consensus so SCC
+        # variants on code (answer_consensus=false) short-circuit at zero
+        # cost; A0 code (answer_consensus=true + huge min_initial) lets
+        # plurality run but never satisfies the Gate-A threshold.
         canonical, size = count_first_plurality(
             init_answers, contributions, task_type,
             enable_contribution_aggregation=self.enable_contribution_aggregation,
+            enable_plurality_for_code=self.enable_answer_consensus,
+            entry_point=entry_point,
         )
         if (
             self.enable_answer_consensus
@@ -246,6 +256,7 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
             rounds=self.max_rounds,
             contributions=contributions,
             task_type=task_type,
+            entry_point=entry_point,
         )
 
         # ---- Final aggregation ----
@@ -254,6 +265,8 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
         canonical, _ = count_first_plurality(
             final_answers, contributions, task_type,
             enable_contribution_aggregation=self.enable_contribution_aggregation,
+            enable_plurality_for_code=self.enable_answer_consensus,
+            entry_point=entry_point,
         )
         if canonical:
             return {"response": format_final(canonical, task_type)}
@@ -279,6 +292,7 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
         rounds: int,
         contributions: List[float],
         task_type: str,
+        entry_point: Optional[str] = None,
     ) -> List[str]:
         current = list(init_answers)
         adj_in = defaultdict(list)
@@ -327,6 +341,8 @@ class SOO_SCC_Main(SOO_Centered_v3_Main):
             canonical, size = count_first_plurality(
                 current, contributions, task_type,
                 enable_contribution_aggregation=self.enable_contribution_aggregation,
+                enable_plurality_for_code=self.enable_answer_consensus,
+                entry_point=entry_point,
             )
             if (
                 self.enable_answer_consensus

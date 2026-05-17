@@ -72,6 +72,15 @@ class MAD_Vote_Main(MAS):
         self.dataset_name = general_config.get("test_dataset_name")
         self.task_type = get_task_type(self.dataset_name, explicit)
 
+        # Diagnostic emission gate. Default True preserves the historical
+        # behaviour (always-emit). Set False for code runs (xverify can't
+        # judge code) and any low-overhead inference.
+        # When False:
+        #   * grade_canonical short-circuits without calling xverify
+        #   * inference() returns only {"response": ...} without the
+        #     full diagnostic dict
+        self.emit_diagnostic = bool(self.method_config.get("emit_diagnostic", True))
+
         self.xverify_model_name = self.method_config.get(
             "xverify_model_name", "xverify-9b-c"
         )
@@ -148,6 +157,13 @@ class MAD_Vote_Main(MAS):
     def _call_xverify(self, query, response_text, gt) -> Tuple[bool, str]:
         if response_text is None or str(response_text).strip() == "":
             return False, "empty-response"
+        if self.task_type == "code":
+            # xverify cannot judge code; downstream pass@1 comes from
+            # evaluations/evaluate_code.py running test_list. Short-circuit
+            # so we don't waste judge tokens — all per-agent `is_correct`
+            # flags become False on code runs, which is the documented
+            # behaviour (diagnostic bucketing doesn't apply to code).
+            return False, "code-no-judge"
         if self.xverify_model_name not in self.model_api_config:
             raise RuntimeError(
                 f"xverify model '{self.xverify_model_name}' not found in model_api_config; "
@@ -210,6 +226,12 @@ class MAD_Vote_Main(MAS):
             return None
         if self.task_type == "mcq":
             return f"The answer is ({canonical})."
+        if self.task_type == "code":
+            # Code canonicals are already executable function strings; the
+            # downstream code evaluator (evaluations/evaluate_code.py) reads
+            # `response` directly via test_list execution rather than a
+            # canonical-anchor string. Returning verbatim preserves it.
+            return str(canonical)
         return f"The answer is \\boxed{{{canonical}}}."
 
     # ------------------------------------------------------------------
@@ -228,6 +250,12 @@ class MAD_Vote_Main(MAS):
         }
 
         def grade_canonical(canonical: Optional[str]) -> Tuple[bool, str]:
+            if not self.emit_diagnostic:
+                # Diagnostic emission off → don't call xverify at all.
+                # Per-agent / per-round is_correct flags become False but
+                # the final `response` is still the correct plurality
+                # winner, which is what downstream evaluator consumes.
+                return False, "emit-disabled"
             if canonical in judge_cache:
                 return judge_cache[canonical]
             response_text = self._canonical_response_text(canonical)
@@ -384,4 +412,6 @@ class MAD_Vote_Main(MAS):
         }
 
         response_str = final_vote if final_vote is not None else ""
+        if not self.emit_diagnostic:
+            return {"response": response_str}
         return {"response": response_str, "diagnostic": diagnostic}

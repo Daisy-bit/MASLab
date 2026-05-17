@@ -64,6 +64,19 @@ def get_initial_user_prompt(query: str, task_type: str) -> str:
             "Reason step by step. At the very end of your response, on its own "
             "line, write exactly: 'The answer is (X)' where X is the option letter."
         )
+    if task_type == "code":
+        # The 5 personas (Algebraic-Reasoner, Numerical-Verifier, ...) are
+        # math-leaning by design but still produce useful diverse code here.
+        # We override only the user-prompt format: restate the signature and
+        # respond inside a single ```python``` fence.
+        return (
+            "You must complete the Python function below. Restate the "
+            "function signature, then write your full implementation. "
+            "Respond with a single ```python ... ``` fenced code block "
+            "containing only the function (and any necessary imports). "
+            "Do not include free-flowing prose outside the code block.\n\n"
+            f"[Function]\n```python\n{query}\n```"
+        )
     return (
         f"{query}\n\n"
         "Reason step by step. At the very end of your response, on its own "
@@ -83,6 +96,15 @@ def get_debate_user_prompt(query: str, peer_responses: list, task_type: str) -> 
             "At the very end of your response, on its own line, write exactly: "
             "'The answer is (X)' where X is the option letter.\n"
             f"\nThe original problem was:\n{query}"
+        )
+    elif task_type == "code":
+        tail = (
+            "\nUse these implementations carefully as additional advice. "
+            "They may contain bugs or miss corner cases. Reconsider your "
+            "implementation, then give an updated version. Respond with a "
+            "single ```python ... ``` fenced code block containing only the "
+            "function (signature restated). No prose outside the block.\n"
+            f"\nThe original function was:\n```python\n{query}\n```"
         )
     else:
         tail = (

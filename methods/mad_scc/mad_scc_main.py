@@ -132,6 +132,18 @@ class MAD_SCC_Main(MAD_Vote_Main):
         self.enable_weighted_aggregation = bool(
             mc.get("enable_weighted_aggregation", False)
         )
+        # Master switch for plurality on code task_type:
+        #   True  → A0 baseline path: BLEU plurality used as the vote (matches
+        #           dylan-style aggregation, no early stop because triggering
+        #           is off).
+        #   False → SCC variant path: plurality is fully skipped; `_vote`
+        #           returns the argmax-contribution agent's code, and
+        #           `_trigger_hit` ignores the size-based plurality check.
+        # Default True preserves math / mcq behaviour (where plurality is
+        # always the aggregation primitive).
+        self.enable_answer_consensus = bool(
+            mc.get("enable_answer_consensus", True)
+        )
         self.top_k = int(mc.get("top_k", 2))
         self.sim_threshold = float(mc.get("sim_threshold", 0.0))
         self.diversity_p = float(mc.get("diversity_p", 0.0))
@@ -215,6 +227,13 @@ class MAD_SCC_Main(MAD_Vote_Main):
                     eq = lambda a, b: bool(a) and bool(b) and a.strip().upper() == b.strip().upper()
                 elif self.task_type == "math":
                     eq = math_is_equiv
+                elif self.task_type == "code":
+                    # BLEU-based equivalence on the full extracted code.
+                    # Syntactically invalid candidates are filtered upstream
+                    # (in extract_answer + this `if not ext` check); BLEU
+                    # threshold is 0.9 (dylan's CODE_THRESHOLD).
+                    from methods.scc_components.voting import code_is_equiv
+                    eq = code_is_equiv
                 else:
                     # open: each ext is its own group
                     eq = lambda a, b: a == b
@@ -231,6 +250,10 @@ class MAD_SCC_Main(MAD_Vote_Main):
                         canon = strip_string(ext)
                     elif self.task_type == "mcq":
                         canon = ext.strip().upper()
+                    elif self.task_type == "code":
+                        # Code canonicals are returned verbatim — they are
+                        # the executable response surface.
+                        canon = ext
                     else:
                         canon = ext
                     g = {
@@ -273,9 +296,34 @@ class MAD_SCC_Main(MAD_Vote_Main):
           enable_weighted_aggregation=True  → (size, weight)
           enable_weighted_aggregation=False → (size, -group_index)
 
+        For code task_type with `enable_answer_consensus=False` (SCC variant
+        path), plurality is skipped entirely: the winner is the
+        argmax-contribution agent's full code. counts/weights are emitted
+        with a single entry (the winner) so the diagnostic schema stays
+        well-formed but downstream `vote_counts` analysis is meaningless
+        for code SCC variants (documented behaviour).
+
         Returns (winner_orig, counts_dict, weights_dict). When no agent
         produced a non-empty extraction, returns (None, {}, {}).
         """
+        if self.task_type == "code" and not self.enable_answer_consensus:
+            # SCC variant on code: pick argmax(contributions) among agents
+            # whose extracted code is non-empty.
+            real = [
+                (i, ext) for i, ext in enumerate(extracted)
+                if ext is not None and ext != ""
+            ]
+            if not real:
+                return None, {}, {}
+            i_best, ext_best = max(
+                real, key=lambda p: contributions[p[0]]
+            )
+            return (
+                ext_best,
+                {ext_best: 1},
+                {ext_best: float(contributions[i_best])},
+            )
+
         groups, _ = self._group_for_diag(extracted, contributions)
         if not groups:
             return None, {}, {}
@@ -299,6 +347,14 @@ class MAD_SCC_Main(MAD_Vote_Main):
         self, extracted: List[Optional[str]], spec_diag: Dict[str, float]
     ) -> Tuple[bool, Optional[str]]:
         if not self.enable_triggering:
+            return False, None
+        # Code task: SCC triggering uses spectral signal only — answer
+        # plurality on code is too noisy (BLEU clusters fluctuate) to be a
+        # reliable early-stop. This matches the user-requested design:
+        # "对 coding task，scc 组件并不需要多数投票...只采用谱共识早停条件".
+        if self.task_type == "code":
+            if is_spectral_consensus(spec_diag, self.variance_consensus_thr):
+                return True, "spectral_trace"
             return False, None
         # Plurality cluster size under task-aware equivalence.
         # `enable_contribution_aggregation=False` makes the size the only
@@ -395,6 +451,8 @@ class MAD_SCC_Main(MAD_Vote_Main):
         }
 
         def grade_canonical(canonical: Optional[str]) -> Tuple[bool, str]:
+            if not self.emit_diagnostic:
+                return False, "emit-disabled"
             if canonical in judge_cache:
                 return judge_cache[canonical]
             response_text = self._canonical_response_text(canonical)
@@ -683,4 +741,6 @@ class MAD_SCC_Main(MAD_Vote_Main):
         }
 
         response_str = final_vote if final_vote is not None else ""
+        if not self.emit_diagnostic:
+            return {"response": response_str}
         return {"response": response_str, "diagnostic": diagnostic}

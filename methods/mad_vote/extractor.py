@@ -29,6 +29,9 @@ DATASET_TASK_TYPE = {
     "MedMCQA": "mcq",
     "MMLU": "mcq",
     "SciBench": "math",
+    "HumanEval": "code",
+    "MBPP": "code",
+    "MBPP-500": "code",
 }
 
 
@@ -190,18 +193,45 @@ def extract_mcq_answer(text: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Code extraction (HumanEval / MBPP)
+# ---------------------------------------------------------------------------
+
+def extract_code_answer(text: str) -> Optional[str]:
+    """Extract the assistant's Python implementation as a single string.
+
+    Wraps dylan's `parse_code_completion` so we share its ```python``` fence
+    detection + signature-recovery fallback. Returns None when nothing
+    extractable is found.
+    """
+    if not text:
+        return None
+    # Late import to keep mad_vote's import-time dependency on dylan minimal.
+    from methods.dylan.utils_humaneval import parse_code_completion
+    code = parse_code_completion(text, "") or ""
+    return code if code else None
+
+
+# ---------------------------------------------------------------------------
 # Unified extraction
 # ---------------------------------------------------------------------------
 
 def extract_answer(text: str, task_type: str) -> Optional[str]:
     if task_type == "mcq":
         return extract_mcq_answer(text)
+    if task_type == "code":
+        return extract_code_answer(text)
     return extract_math_answer(text)
 
 
 def extract_gold(gt, task_type: str) -> Optional[str]:
     """Normalize the dataset's gold answer (`gt` field) into a canonical form."""
     if gt is None:
+        return None
+    if task_type == "code":
+        # Code tasks have no string-form gold; correctness comes from
+        # executing test_list against the response (see evaluations/
+        # evaluate_code.py). Returning None ensures grade_canonical's
+        # judge_cache treats every code canonical as "no-judge".
         return None
     if isinstance(gt, (int, float)):
         if task_type == "mcq":
@@ -220,6 +250,11 @@ def answers_equivalent(pred: Optional[str], gold: Optional[str], task_type: str)
         return False
     if task_type == "mcq":
         return pred.strip().upper() == gold.strip().upper()
+    if task_type == "code":
+        # Not used: code correctness is decided by executing test_list, not
+        # by string equivalence. Returning False is the safe default so any
+        # accidental caller can't silently mark code samples as "correct".
+        return False
     # math: try numeric, fall back to string
     pn = _normalize_number_str(pred)
     gn = _normalize_number_str(gold)
@@ -243,7 +278,15 @@ def plurality_vote(answers, task_type: str):
     Ties broken by first-appearance (stable).
     None / empty answers are still counted as a "no-extraction" bucket but never win
     if any real answer received >= 1 vote -- they only win if everyone failed extraction.
+
+    For task_type=="code", grouping uses BLEU-similarity (>= CODE_THRESHOLD)
+    on the full extracted code (signature included). The winning group's
+    first member's code is returned as the canonical winner. `counts` is
+    keyed by the winning representative, not by an abstract key.
     """
+    if task_type == "code":
+        return _code_plurality_vote(answers)
+
     counts = {}
     order = []
     for a in answers:
@@ -268,3 +311,50 @@ def plurality_vote(answers, task_type: str):
                 best = k
         return best, counts
     return None, counts
+
+
+def _code_plurality_vote(extracted_codes):
+    """BLEU-based plurality for code candidates (mad_vote baseline path).
+
+    Thin wrapper around `scc_components.voting.bleu_cluster_groups` —
+    shares the same clustering logic as soo_scc / mad_scc to prevent the
+    two implementations from drifting.
+
+    `extracted_codes` is the output of `extract_answer(reply, "code")` for
+    each agent — already-extracted code strings or None. We don't have
+    sample.entry_point here, so BLEU is computed on the full extracted
+    code (no body stripping). For tighter clustering, callers that DO
+    have entry_point should use scc_components.count_first_plurality
+    directly.
+
+    Returns (winner_full_code_or_None, counts_dict). counts_dict maps
+    each cluster's representative -> cluster size, plus a {None: n} entry
+    for failed-extraction / syntactically invalid agents.
+    """
+    # Late imports keep this module's top-level dependencies small for the
+    # math / mcq fast path.
+    from methods.scc_components.voting import bleu_cluster_groups
+    from methods.dylan.utils_humaneval import py_is_syntax_valid
+
+    groups = bleu_cluster_groups(extracted_codes, entry_point=None)
+    none_count = sum(
+        1 for a in extracted_codes if not a or not py_is_syntax_valid(a)
+    )
+
+    if not groups:
+        if none_count:
+            return None, {None: none_count}
+        return None, {}
+
+    # Winner: largest cluster, ties → earliest seen.
+    best = groups[0]
+    for g in groups[1:]:
+        if len(g) > len(best):
+            best = g
+
+    # Counts dict: group representative (full code) → cluster size.
+    counts = {g[0][2]: len(g) for g in groups}
+    if none_count:
+        counts[None] = none_count
+
+    return best[0][2], counts

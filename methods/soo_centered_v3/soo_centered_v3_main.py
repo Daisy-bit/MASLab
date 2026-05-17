@@ -200,6 +200,19 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
             )
             return f"{head}[Question]\n{query}\n"
 
+        if task_type == "code":
+            # dylan-style: restate the signature, only python code in a single
+            # ```python``` fence. We intentionally avoid the "impl]" markers
+            # dylan uses internally; the extractor relies on the fenced block.
+            return (
+                "You must complete the Python function below. Restate the "
+                "function signature, then write your full implementation. "
+                "Respond with a single ```python ... ``` fenced code block "
+                "containing only the function (and any necessary imports). "
+                "Do not include free-flowing prose outside the code block.\n"
+                f"[Function]\n```python\n{query}\n```\n"
+            )
+
         return (
             "You will independently attempt the user's task. Let's think step "
             "by step. Be precise and complete.\n"
@@ -219,6 +232,13 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
             tail = (
                 "Re-examine your reasoning and the peer answers step by step. "
                 "They may be wrong. End your reply with 'The answer is (X)'."
+            )
+        elif task_type == "code":
+            tail = (
+                "Re-examine your implementation and the peer implementations "
+                "above. They may contain bugs or miss corner cases. Write the "
+                "improved full function in a single ```python ... ``` fenced "
+                "block (restate the signature). No prose outside the block."
             )
         else:
             tail = (
@@ -244,6 +264,12 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
             tail = (
                 "Review your previous answer and improve it if needed. End "
                 "with 'The answer is (X)'."
+            )
+        elif task_type == "code":
+            tail = (
+                "Review your previous implementation and improve it if needed. "
+                "Return the full function in a single ```python ... ``` fenced "
+                "block (restate the signature). No prose outside the block."
             )
         else:
             tail = "Review your previous answer and improve it if needed."
@@ -295,6 +321,14 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
             return extract_math_answer(reply) or ""
         if task_type == "mcq":
             return self._extract_mcq_letter(reply)
+        if task_type == "code":
+            # Late import: parse_code_completion lives in dylan.utils_humaneval,
+            # which has no class-level state. Passing "" as the question is safe
+            # for our prompts — they always include a ```python``` fence with
+            # the signature; the question-prepending fallback only fires when
+            # no `def` is present, which our extractor pipeline filters out.
+            from methods.dylan.utils_humaneval import parse_code_completion
+            return parse_code_completion(reply, "") or ""
         return ""
 
     @staticmethod
@@ -311,10 +345,14 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
 
         For math: reuses soo_math's normalizer/equivalence (strip_string +
         numeric fallback). For MCQ: exact-letter equality.  For open: no
-        plurality (returns ("", 0)).
+        plurality (returns ("", 0)). For code: short-circuits — v3's
+        diagnostic-emit path uses xverify which cannot grade code, so code
+        runs must have emit_diagnostic=False and go through soo_scc's own
+        scc_components-based inference (which calls count_first_plurality
+        directly with entry_point/enable_plurality_for_code).
         """
         n = len(answers)
-        if n == 0 or task_type == "open":
+        if n == 0 or task_type in ("open", "code"):
             return "", 0
 
         extracted = [self._extract_answer(a, task_type) for a in answers]
@@ -780,13 +818,22 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
         self, canonical: Optional[str], task_type: str
     ) -> Optional[str]:
         """Synthesise an 'answer-only' sentence so xverify sees a consistent
-        input form. Mirrors mad_vote but parametrised on task_type."""
+        input form. Mirrors mad_vote but parametrised on task_type.
+
+        Code is special-cased: the canonical is already an executable function
+        (signature preserved), so we return it verbatim. Diagnostic-mode
+        consumers must NOT route this through xverify — they need an
+        execution-based grader (see evaluations/evaluate_code.py). The
+        recommended setup is `emit_diagnostic=false` for code configs.
+        """
         if canonical is None:
             return None
         if task_type == "mcq":
             return f"The answer is ({canonical})."
         if task_type == "math":
             return f"The answer is \\boxed{{{canonical}}}."
+        if task_type == "code":
+            return str(canonical)
         return str(canonical)
 
     @staticmethod
