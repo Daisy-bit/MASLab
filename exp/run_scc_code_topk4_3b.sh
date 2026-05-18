@@ -23,6 +23,20 @@
 #   If A4_topk4 still loses to A0, the SCC modules themselves are the
 #   issue on code, independent of routing density.
 #
+# Cross-family A0 reuse (POOL_SOURCE_DIR):
+#   By default, this script automatically inherits the A0_vanilla pool
+#   from the most recent topk3 run. The intent: topk3 and topk4 differ
+#   only in top_k, but A0 doesn't consult top_k (enable_routing=false),
+#   so A0_topk3 and A0_topk4 should be the *same numbers* by design.
+#   Inheriting topk3's A0 ensures topk4's A1..A4 replay the IDENTICAL
+#   round-0 pool that topk3's A1..A4 saw, so A4_topk3 vs A4_topk4 is
+#   a clean top_k=3 vs top_k=4 comparison with no sampling noise on
+#   either side and no wasted LLM calls re-running A0.
+#
+#   Override by setting POOL_SOURCE_DIR=/path/to/<run>/A0_vanilla to
+#   point at any other source (e.g. a base topk2 family A0). Set
+#   POOL_SOURCE_DIR="" (empty string) to force a fresh A0 from scratch.
+#
 # Cells (same 5-cell code ablation matrix as the base run):
 #   A0   |  -    |   -   | BLEU plurality (baseline)
 #   A3   |  -    |   -   | argmax(contribution)
@@ -69,6 +83,16 @@ MODEL="${MODEL:-qwen25-3b-instruct}"
 MODEL_LABEL="${MODEL_LABEL:-3b}"
 EVAL_ONLY="${EVAL_ONLY:-0}"
 VARIANTS_FILTER="${VARIANTS_FILTER:-}"
+
+# Cross-family A0 source. Default: auto-detect latest topk3 A0_vanilla.
+# Behaviour:
+#   * unset (default)  → auto-detect latest results_mad_scc_code_topk3/run_*/A0_vanilla
+#   * set to a path    → use that path verbatim (must end in .../A0_vanilla)
+#   * set to "" empty  → force fresh A0 (legacy topk3-style behaviour)
+# Sentinel handling: distinguish "unset" from "set to empty" using ${VAR+x}.
+if [[ "${POOL_SOURCE_DIR+x}" != "x" ]]; then
+    POOL_SOURCE_DIR="$(ls -dt results_mad_scc_code_topk3/run_*/A0_vanilla 2>/dev/null | head -1 || true)"
+fi
 
 # Validate methods. Only mad_scc has topk4 configs in this experiment
 # family — soo_scc lives in the original code run, since it already
@@ -139,6 +163,39 @@ for METHOD in $METHODS; do
         RUN_ROOT="./results_${METHOD}_code_topk4/run_${TIMESTAMP}"
         mkdir -p "$RUN_ROOT"
         RUN_ROOTS[$METHOD]="$RUN_ROOT"
+
+        # ----- Cross-family A0 prepopulation -----
+        # If POOL_SOURCE_DIR is non-empty, copy its *_infer.jsonl files
+        # into the fresh ${RUN_ROOT}/A0_vanilla/. Pass 1's A0 inference
+        # then becomes a no-op (inference.py's reserve_unprocessed_queries
+        # detects every sample is already done) and Pass 2 reads from
+        # the pre-populated A0 dir as usual. Result: topk4's paper table
+        # contains A0 numbers IDENTICAL to topk3's, and A1..A4 replay
+        # round-0 from the exact same pool topk3 used.
+        if [[ -n "${POOL_SOURCE_DIR:-}" ]]; then
+            if [[ ! -d "$POOL_SOURCE_DIR" ]]; then
+                echo "[ERR] POOL_SOURCE_DIR not found: ${POOL_SOURCE_DIR}" >&2
+                exit 1
+            fi
+            DST_A0="${RUN_ROOT}/A0_vanilla"
+            mkdir -p "$DST_A0"
+            n_copied=0
+            for src in "$POOL_SOURCE_DIR"/${METHOD}_*_infer.jsonl; do
+                if [[ -f "$src" ]]; then
+                    cp -n "$src" "$DST_A0/"
+                    n_copied=$((n_copied + 1))
+                fi
+            done
+            if [[ $n_copied -gt 0 ]]; then
+                echo ">> Prepopulated A0 for ${METHOD}: ${n_copied} file(s) copied"
+                echo "   src: ${POOL_SOURCE_DIR}"
+                echo "   dst: ${DST_A0}"
+                echo "   (Pass 1 A0 will skip already-done samples; A1..A4 replay this pool)"
+            else
+                echo "[WARN] POOL_SOURCE_DIR set but no ${METHOD}_*_infer.jsonl found at ${POOL_SOURCE_DIR}"
+                echo "       Pass 1 will run A0 fresh."
+            fi
+        fi
     fi
 done
 
@@ -150,6 +207,11 @@ echo "=================================================="
 echo "  Cluster A — 3B code pipeline (topk4 family, mad_scc only)"
 echo "  Time         : $(date)"
 echo "  Methods      : ${METHODS}"
+if [[ -n "${POOL_SOURCE_DIR:-}" ]]; then
+    echo "  A0 source    : ${POOL_SOURCE_DIR} (cross-family reuse)"
+else
+    echo "  A0 source    : fresh (no POOL_SOURCE_DIR)"
+fi
 for METHOD in $METHODS; do
     echo "  Run dir [${METHOD}] : ${RUN_ROOTS[$METHOD]}"
 done
