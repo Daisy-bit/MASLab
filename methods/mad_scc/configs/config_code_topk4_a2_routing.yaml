@@ -1,0 +1,35 @@
+# Cluster A (code, topk4 family) — variant A2: + Contribution-DAG Routing.
+# Identical to config_code_a2_routing.yaml except top_k=4 (active here:
+# with 5 agents and top_k=4, every agent receives from all 4 other
+# peers — routing reduces to a full mesh with contribution-based edge
+# ORDERING but no topological pruning. Direct contrast with A0:
+# A0 = broadcast + no contribution; A2_topk4 = broadcast + contribution
+# priority. Isolates whether contribution ordering helps when topology
+# is held fixed at full connectivity).
+
+agents_num: 5
+rounds_num: 3
+task_type: code
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+enable_triggering: false
+enable_routing: true
+enable_weighted_aggregation: false
+
+enable_answer_consensus: false
+
+top_k: 4
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2
+
+sim_threshold: 0.75
+diversity_p: 0.2
+enforce_dag: true
+
+equiv_protocol: task_aware
+
+emit_diagnostic: true

@@ -1,0 +1,36 @@
+# Cluster A (code, topk4 family) — variant A4: full SCC overlay.
+# Identical to config_code_a4_all.yaml except top_k=4 (active here:
+# with 5 agents and top_k=4, routing reduces to a full mesh with
+# contribution-based ORDERING — same connectivity as mad_vote's
+# broadcast baseline, so any A4_topk4 vs A0 gap is purely from the
+# three SCC components (contribution priority + spectral triggering +
+# argmax aggregation), NOT topology pruning. Headline cell for the
+# topk4 hypothesis: if A4_topk4 still loses to A0, the SCC modules
+# themselves do not help on code regardless of routing density).
+
+agents_num: 5
+rounds_num: 3
+task_type: code
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+enable_triggering: true
+enable_routing: true
+enable_weighted_aggregation: true
+
+enable_answer_consensus: false
+
+top_k: 4
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2
+
+sim_threshold: 0.75
+diversity_p: 0.2
+enforce_dag: true
+
+equiv_protocol: task_aware
+
+emit_diagnostic: true

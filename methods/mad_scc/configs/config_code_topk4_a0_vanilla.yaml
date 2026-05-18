@@ -1,0 +1,49 @@
+# Cluster A (code, topk4 family) — variant A0: vanilla mad_vote baseline.
+# Identical to config_code_a0_vanilla.yaml except top_k=4 (routing knob;
+# unused in A0 since enable_routing=false but kept for matrix symmetry —
+# all configs in the topk4 family share top_k=4).
+#
+# Experiment intent (topk4 family, mad_scc only):
+#   Follow-up to the topk3 family (which still left mad_scc A4 below A0
+#   on code). With 5 agents, top_k=4 means each agent receives from ALL
+#   4 other peers — contribution-DAG Routing degenerates to a full mesh
+#   (same connectivity as mad_vote's baseline broadcast). In A4_topk4
+#   vs A0 the topology gap is fully closed; any remaining gap is
+#   attributable to the THREE SCC components (contribution priority +
+#   spectral triggering + argmax aggregation), not the topology change.
+#   If A4_topk4 still loses to A0, SCC modules themselves don't help on
+#   code regardless of routing density.
+
+agents_num: 5
+rounds_num: 3
+task_type: code
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+# Baseline: all SCC modules off.
+enable_triggering: false
+enable_routing: false
+enable_weighted_aggregation: false
+
+# Plurality ON → BLEU clustering at final vote (no early stop because
+# enable_triggering is also off).
+enable_answer_consensus: true
+
+top_k: 4
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2
+
+sim_threshold: 0.75
+diversity_p: 0.0
+enforce_dag: true
+
+equiv_protocol: task_aware
+
+# Diagnostic emission ON: per-agent / per-round code is graded via
+# subprocess test execution (evaluations.evaluate_code.grade_code_sample),
+# NOT xverify. Output JSONL matches the math/MCQ diagnostic schema so
+# analyze_diagnostic.py and build_madvote_scc_tables.py work unchanged.
+emit_diagnostic: true

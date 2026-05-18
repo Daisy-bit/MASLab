@@ -1,0 +1,31 @@
+# Cluster A (code, topk4 family) — variant A1: + Spectral Triggering only.
+# Identical to config_code_a1_triggering.yaml except top_k=4 (kept for
+# matrix symmetry; only consulted when enable_routing=true).
+
+agents_num: 5
+rounds_num: 3
+task_type: code
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+enable_triggering: true
+enable_routing: false
+enable_weighted_aggregation: false
+
+# Plurality OFF for code SCC variants.
+enable_answer_consensus: false
+
+top_k: 4
+variance_consensus_thr: 0.05
+answer_consensus_min: 3      # ignored on code (only spectral fires)
+emb_model: model/all-MiniLM-L6-v2
+
+sim_threshold: 0.75
+diversity_p: 0.0
+enforce_dag: true
+
+equiv_protocol: task_aware
+
+emit_diagnostic: true
