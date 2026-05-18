@@ -169,17 +169,86 @@ for METHOD in $METHODS; do
     echo "##############################################################"
 
     # --------------------------------------------------------------
-    # Stage 1: inference (per variant × per dataset)
+    # Stage 1: inference, two-pass for fair ablation.
+    #
+    # Pass 1 (no pool): A0_vanilla samples fresh round-0 LLM outputs and
+    #                   writes them to its diagnostic JSONL.
+    # Pass 2 (pool):    A1..A4 replay round-0 from A0's output via
+    #                   --initial_pool_dir so all variants debate from
+    #                   the SAME initial answer pool, isolating SCC
+    #                   module effects from round-0 sampling noise.
+    #
+    # Pool source: ${RUN_ROOT}/A0_vanilla/${METHOD}_{dataset}_infer.jsonl
+    # If A0 is filtered out, falls back to the most recent
+    # results_${METHOD}_code/run_*/A0_vanilla; if none exists, variants
+    # sample fresh (with a warning).
     # --------------------------------------------------------------
     if [[ "$EVAL_ONLY" != "1" ]]; then
+        A0_VARIANT=""
+        OTHER_VARIANTS=()
         for entry in "${VARIANTS[@]}"; do
+            VAR_ID="${entry%%:*}"
+            if [[ "$VAR_ID" == "A0_vanilla" ]]; then
+                A0_VARIANT="$entry"
+            else
+                OTHER_VARIANTS+=("$entry")
+            fi
+        done
+
+        # ---- Pass 1: A0 fresh ----
+        if [[ -n "$A0_VARIANT" ]]; then
+            VAR_ID="${A0_VARIANT%%:*}"
+            CFG_NAME="${A0_VARIANT##*:}"
+            VAR_DIR="${RUN_ROOT}/${VAR_ID}"
+            mkdir -p "$VAR_DIR"
+            echo ""
+            echo "============== [${METHOD}] Pass 1 :: ${VAR_ID} fresh (pool source) =============="
+            for ds in $DATASETS; do
+                DATA_FILE="${PROJECT_ROOT}/datasets/data/${ds}.json"
+                if [[ ! -f "$DATA_FILE" ]]; then
+                    echo "[WARN] dataset file not found: ${DATA_FILE} -- skipping ${ds}"
+                    continue
+                fi
+                OUT_FILE="${VAR_DIR}/${METHOD}_${ds}_infer.jsonl"
+                echo "------------------------------------------"
+                echo ">> [${METHOD}/${VAR_ID}] inference on ${ds} (no pool)"
+                echo ">> output: ${OUT_FILE}"
+                echo "------------------------------------------"
+                python inference.py \
+                    --method_name "${METHOD}" \
+                    --method_config_name "${CFG_NAME}" \
+                    --model_name "${MODEL}" \
+                    --test_dataset_name "${ds}" \
+                    --output_path "${OUT_FILE}" \
+                    "${PASSTHROUGH_ARGS[@]}" || {
+                    echo "[WARN] inference failed for ${METHOD}/${VAR_ID}/${ds} -- continuing"
+                }
+            done
+        fi
+
+        # ---- Resolve pool dir for Pass 2 ----
+        POOL_DIR="${RUN_ROOT}/A0_vanilla"
+        if [[ ! -d "$POOL_DIR" ]]; then
+            latest_a0=$(ls -dt results_${METHOD}_code/run_*/A0_vanilla 2>/dev/null | head -1 || true)
+            if [[ -n "$latest_a0" ]]; then
+                POOL_DIR="$latest_a0"
+                echo "[INFO] A0 not run in this pass; reusing pool from ${POOL_DIR}"
+            else
+                POOL_DIR=""
+                echo "[WARN] no A0 pool available; A1..A4 will sample round-0 fresh"
+                echo "       (round-0 randomness will confound the ablation)"
+            fi
+        fi
+
+        # ---- Pass 2: A1..A4 replay from pool ----
+        for entry in "${OTHER_VARIANTS[@]}"; do
             VAR_ID="${entry%%:*}"
             CFG_NAME="${entry##*:}"
             VAR_DIR="${RUN_ROOT}/${VAR_ID}"
             mkdir -p "$VAR_DIR"
 
             echo ""
-            echo "============== [${METHOD}] Inference :: ${VAR_ID} (${CFG_NAME}) =============="
+            echo "============== [${METHOD}] Pass 2 :: ${VAR_ID} (${CFG_NAME}) =============="
             for ds in $DATASETS; do
                 DATA_FILE="${PROJECT_ROOT}/datasets/data/${ds}.json"
                 if [[ ! -f "$DATA_FILE" ]]; then
@@ -189,14 +258,23 @@ for METHOD in $METHODS; do
                 OUT_FILE="${VAR_DIR}/${METHOD}_${ds}_infer.jsonl"
                 echo "------------------------------------------"
                 echo ">> [${METHOD}/${VAR_ID}] inference on ${ds}"
+                if [[ -n "$POOL_DIR" ]]; then
+                    echo ">> initial pool: ${POOL_DIR}"
+                fi
                 echo ">> output: ${OUT_FILE}"
                 echo "------------------------------------------"
+                POOL_ARGS=()
+                if [[ -n "$POOL_DIR" ]]; then
+                    POOL_ARGS=(--initial_pool_dir "$POOL_DIR"
+                               --initial_pool_filename_pattern "${METHOD}_{dataset}_infer.jsonl")
+                fi
                 python inference.py \
                     --method_name "${METHOD}" \
                     --method_config_name "${CFG_NAME}" \
                     --model_name "${MODEL}" \
                     --test_dataset_name "${ds}" \
                     --output_path "${OUT_FILE}" \
+                    "${POOL_ARGS[@]}" \
                     "${PASSTHROUGH_ARGS[@]}" || {
                     echo "[WARN] inference failed for ${METHOD}/${VAR_ID}/${ds} -- continuing"
                 }
