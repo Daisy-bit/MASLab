@@ -1,0 +1,31 @@
+# Cluster A (code, topk3 family) — variant A2: + Contribution-DAG Routing.
+# Identical to config_code_a2_routing.yaml except top_k=3 (active here:
+# routing now selects 3 peers per agent instead of 2, recovering most
+# of mad_vote's broadcast information density).
+
+agents_num: 5
+rounds_num: 3
+task_type: code
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+enable_triggering: false
+enable_routing: true
+enable_weighted_aggregation: false
+
+enable_answer_consensus: false
+
+top_k: 3
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2
+
+sim_threshold: 0.75
+diversity_p: 0.2
+enforce_dag: true
+
+equiv_protocol: task_aware
+
+emit_diagnostic: true

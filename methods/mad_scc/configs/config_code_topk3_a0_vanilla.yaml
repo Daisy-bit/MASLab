@@ -1,0 +1,45 @@
+# Cluster A (code, topk3 family) — variant A0: vanilla mad_vote baseline.
+# Identical to config_code_a0_vanilla.yaml except top_k=3 (routing knob;
+# unused in A0 since enable_routing=false but kept for matrix symmetry —
+# all configs in the topk3 family share top_k=3).
+#
+# Experiment intent (topk3 family, mad_scc only):
+#   Hypothesis: mad_scc's negative ablation on code at top_k=2 is caused
+#   by routing breaking mad_vote's broadcast advantage (each agent sees
+#   only 2 of 4 peers). Raising top_k to 3 restores most of that
+#   information density (each agent sees 3 of 4 peers) and should
+#   narrow / close the gap with A0 baseline.
+
+agents_num: 5
+rounds_num: 3
+task_type: code
+
+xverify_model_name: xverify-9b-c
+xverify_max_tokens: 64
+xverify_temperature: 0.0
+
+# Baseline: all SCC modules off.
+enable_triggering: false
+enable_routing: false
+enable_weighted_aggregation: false
+
+# Plurality ON → BLEU clustering at final vote (no early stop because
+# enable_triggering is also off).
+enable_answer_consensus: true
+
+top_k: 3
+variance_consensus_thr: 0.05
+answer_consensus_min: 3
+emb_model: model/all-MiniLM-L6-v2
+
+sim_threshold: 0.75
+diversity_p: 0.0
+enforce_dag: true
+
+equiv_protocol: task_aware
+
+# Diagnostic emission ON: per-agent / per-round code is graded via
+# subprocess test execution (evaluations.evaluate_code.grade_code_sample),
+# NOT xverify. Output JSONL matches the math/MCQ diagnostic schema so
+# analyze_diagnostic.py and build_madvote_scc_tables.py work unchanged.
+emit_diagnostic: true
