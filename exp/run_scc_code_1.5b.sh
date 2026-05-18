@@ -24,9 +24,16 @@
 # the SAME timestamp across both methods (so paired runs are easy to spot).
 # Per-method paper tables: paper_tables/<method>_code_1.5b.{csv,md}.
 #
-# Stage 1 (Inference): inference.py with config_code_aX_*.yaml
-# Stage 2 (Eval): evaluate.py --eval_protocol code (subprocess pass@1)
-# Stage 3 (Paper tables): scripts/diagnostic/build_code_tables.py
+# Stage 1 (Inference): inference.py with config_code_aX_*.yaml. Configs now
+#                       have emit_diagnostic=true, so each agent's per-round
+#                       code is graded inline via subprocess (the diagnostic
+#                       JSONL schema is identical to math/MCQ).
+# Stage 2 (Per-variant analysis): scripts/diagnostic/analyze_diagnostic.py
+#                       — same 6 tables as math/MCQ (initial_diagnostics,
+#                       regime_analysis, accuracy_decomposition, ...).
+# Stage 3 (Paper tables): scripts/diagnostic/build_madvote_scc_tables.py
+#                       — same aggregation as math/MCQ, so paper_tables files
+#                       align column-for-column.
 #
 # Usage (from MASLab/ project root):
 #   bash exp/run_scc_code_1.5b.sh                      # full both-methods run
@@ -202,59 +209,49 @@ for METHOD in $METHODS; do
     fi
 
     # --------------------------------------------------------------
-    # Stage 2: evaluation (pass@1 via subprocess sandbox)
+    # Stage 2: per-variant analysis (6 diagnostic tables)
     #
-    # evaluations/__init__.py auto-routes HumanEval / MBPP / MBPP-500 to
-    # eval_func_code regardless of --eval_protocol, so the "code" tag here
-    # is just for clarity. evaluate.py writes <basename>_xverify_eval.jsonl
-    # next to the infer file (filename suffix is historical).
+    # analyze_diagnostic.py reads the diagnostic JSONL emitted by
+    # inference (now containing per-agent / per-round code-grading
+    # records) and writes table1..6 to <variant>/_tables/. Same script
+    # and schema as math/MCQ — no code-specific fork.
     # --------------------------------------------------------------
     echo ""
-    echo "================= [${METHOD}] Evaluation ====================="
+    echo "================= [${METHOD}] Analysis ====================="
     for entry in "${VARIANTS[@]}"; do
         VAR_ID="${entry%%:*}"
-        CFG_NAME="${entry##*:}"
         VAR_DIR="${RUN_ROOT}/${VAR_ID}"
         if [[ ! -d "$VAR_DIR" ]]; then
-            echo "[WARN] no inference output for ${METHOD}/${VAR_ID} -- skipping eval"
+            echo "[WARN] no inference output for ${METHOD}/${VAR_ID} -- skipping analysis"
             continue
         fi
-        for ds in $DATASETS; do
-            INFER_FILE="${VAR_DIR}/${METHOD}_${ds}_infer.jsonl"
-            if [[ ! -f "$INFER_FILE" ]]; then
-                echo "[WARN] no infer file for ${METHOD}/${VAR_ID}/${ds} -- skipping eval"
-                continue
-            fi
-            echo "------------------------------------------"
-            echo ">> [${METHOD}/${VAR_ID}] eval pass@1 on ${ds}"
-            echo "------------------------------------------"
-            python evaluate.py \
-                --eval_protocol code \
-                --model_name "${MODEL}" \
-                --tested_dataset_name "${ds}" \
-                --tested_method_name "${METHOD}" \
-                --tested_method_config_name "${CFG_NAME}" \
-                --tested_mas_model_name "${MODEL}" \
-                --tested_infer_path "${INFER_FILE}" \
-                --overwrite || {
-                echo "[WARN] eval failed for ${METHOD}/${VAR_ID}/${ds}"
-            }
-        done
+        TABLES_DIR="${VAR_DIR}/_tables"
+        echo "------------------------------------------"
+        echo ">> [${METHOD}/${VAR_ID}] building Tables 1..6 -> ${TABLES_DIR}"
+        echo "------------------------------------------"
+        python scripts/diagnostic/analyze_diagnostic.py \
+            --infer_dir "${VAR_DIR}" \
+            --output_dir "${TABLES_DIR}" \
+            --datasets ${DATASETS} \
+            --filename_pattern "${METHOD}_{dataset}_infer.jsonl" \
+            --strict || {
+            echo "[WARN] analysis failed (or sanity checks failed) for ${METHOD}/${VAR_ID}"
+        }
     done
 
     # --------------------------------------------------------------
-    # Stage 3: aggregate paper table (pass@1 by variant × dataset)
+    # Stage 3: aggregate paper tables (A1: per-variant; A2: per-dataset)
     # --------------------------------------------------------------
     echo ""
     echo "================ [${METHOD}] Paper Tables =================="
     mkdir -p paper_tables
-    python scripts/diagnostic/build_code_tables.py \
+    python scripts/diagnostic/build_madvote_scc_tables.py \
         --run_dir "${RUN_ROOT}" \
-        --method_label "${METHOD}" \
-        --model_label "${MODEL_LABEL}" \
+        --model_label "${MODEL_LABEL}_code" \
+        --filename_pattern "${METHOD}_{dataset}_infer.jsonl" \
         --datasets ${DATASETS} \
         --out_dir paper_tables \
-        --prefix "${METHOD}_code" || {
+        --prefix "${METHOD}" || {
         echo "[WARN] paper_tables aggregation failed for ${METHOD}."
     }
 done
@@ -263,7 +260,9 @@ echo ""
 echo "=================================================="
 echo ">> Cluster A 1.5B code pipeline (both methods) finished: $(date)"
 for METHOD in $METHODS; do
-    echo ">> [${METHOD}] Run dir      : ${RUN_ROOTS[$METHOD]}"
-    echo ">> [${METHOD}] Paper tables : paper_tables/${METHOD}_code_${MODEL_LABEL}.{csv,md}"
+    echo ">> [${METHOD}] Run dir          : ${RUN_ROOTS[$METHOD]}"
+    echo ">> [${METHOD}] Per-variant tables: ${RUN_ROOTS[$METHOD]}/<variant>/_tables/"
+    echo ">> [${METHOD}] Paper tables     : paper_tables/${METHOD}_A1_${MODEL_LABEL}_code.{csv,md}"
+    echo ">>                                paper_tables/${METHOD}_A2_${MODEL_LABEL}_code.{csv,md}"
 done
 echo "=================================================="

@@ -31,4 +31,4 @@ equiv_protocol: task_aware
 
 # Disable diagnostic emission (xverify cannot judge code; downstream pass@1
 # comes from evaluations/evaluate_code.py).
-emit_diagnostic: false
+emit_diagnostic: true

@@ -43,9 +43,11 @@ force_task_type: code
 
 emb_model: model/all-MiniLM-L6-v2
 
-# xverify cannot grade code; diagnostic emission stays off for code runs.
-# Downstream pass@1 comes from evaluations/evaluate_code.py.
-emit_diagnostic: false
+# Diagnostic emission ON: per-agent / per-round code is graded via
+# subprocess test execution (evaluations.evaluate_code.grade_code_sample),
+# NOT xverify. Output JSONL matches the math/MCQ diagnostic schema so
+# analyze_diagnostic.py and build_madvote_scc_tables.py work unchanged.
+emit_diagnostic: true
 xverify_model_name: xverify-9b-c
 xverify_max_tokens: 64
 xverify_temperature: 0.0

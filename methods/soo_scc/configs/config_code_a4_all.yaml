@@ -36,7 +36,7 @@ force_task_type: code
 
 emb_model: model/all-MiniLM-L6-v2
 
-emit_diagnostic: false
+emit_diagnostic: true
 xverify_model_name: xverify-9b-c
 xverify_max_tokens: 64
 xverify_temperature: 0.0
