@@ -249,17 +249,36 @@ class MAD_Vote_Main(MAS):
             None: (False, "no-extraction")
         }
 
+        # Code-grading context. Read once per sample; passed into
+        # grade_code_sample for each unique canonical. Unused for math/mcq.
+        code_entry_point = sample.get("entry_point", "")
+        code_test = sample.get("test")
+        code_test_list = sample.get("test_list", [])
+        code_test_setup = sample.get("test_setup_code", "")
+
         def grade_canonical(canonical: Optional[str]) -> Tuple[bool, str]:
             if not self.emit_diagnostic:
-                # Diagnostic emission off → don't call xverify at all.
+                # Diagnostic emission off → no grading at all.
                 # Per-agent / per-round is_correct flags become False but
                 # the final `response` is still the correct plurality
                 # winner, which is what downstream evaluator consumes.
                 return False, "emit-disabled"
             if canonical in judge_cache:
                 return judge_cache[canonical]
-            response_text = self._canonical_response_text(canonical)
-            verdict = self._judge_or_default(query, response_text, gt)
+            if self.task_type == "code":
+                # Subprocess test execution instead of xverify. Late import
+                # keeps mad_vote's import-time deps minimal for math / mcq.
+                from evaluations.evaluate_code import grade_code_sample
+                verdict = grade_code_sample(
+                    canonical,
+                    entry_point=code_entry_point,
+                    test=code_test,
+                    test_list=code_test_list,
+                    test_setup_code=code_test_setup,
+                )
+            else:
+                response_text = self._canonical_response_text(canonical)
+                verdict = self._judge_or_default(query, response_text, gt)
             judge_cache[canonical] = verdict
             return verdict
 

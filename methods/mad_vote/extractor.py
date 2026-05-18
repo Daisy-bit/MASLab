@@ -228,11 +228,13 @@ def extract_gold(gt, task_type: str) -> Optional[str]:
     if gt is None:
         return None
     if task_type == "code":
-        # Code tasks have no string-form gold; correctness comes from
-        # executing test_list against the response (see evaluations/
-        # evaluate_code.py). Returning None ensures grade_canonical's
-        # judge_cache treats every code canonical as "no-judge".
-        return None
+        # Code tasks have no single-string gold (correctness comes from
+        # executing test_list / test). We return str(gt) — the canonical
+        # solution from the HF dataset — as a *placeholder* gold_answer so
+        # downstream `analyze_diagnostic.py`'s "is None" filter doesn't
+        # drop code samples. The string is never used for grading; grading
+        # goes through evaluations.evaluate_code.grade_code_sample.
+        return str(gt) if str(gt).strip() else "code-no-string-gold"
     if isinstance(gt, (int, float)):
         if task_type == "mcq":
             return str(gt).strip().upper()

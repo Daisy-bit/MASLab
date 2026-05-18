@@ -972,9 +972,25 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
         gt = sample.get("gt")
         reference = sample.get("reference", None)
         task_type = self._detect_task_type(sample)
-        gold = extract_gold(gt, task_type) if task_type in ("math", "mcq") else gt
+        if task_type == "code":
+            # Same placeholder convention as mad_vote.extractor.extract_gold:
+            # store str(gt) (canonical solution) as gold_answer so the
+            # downstream analyze_diagnostic filter doesn't drop code
+            # samples. Never used for grading — grading goes through
+            # evaluations.evaluate_code.grade_code_sample.
+            gold = str(gt) if gt and str(gt).strip() else "code-no-string-gold"
+        elif task_type in ("math", "mcq"):
+            gold = extract_gold(gt, task_type)
+        else:
+            gold = gt
 
         n = self.num_agents
+
+        # Code-grading context (used only when task_type == "code").
+        code_entry_point = sample.get("entry_point", "")
+        code_test = sample.get("test")
+        code_test_list = sample.get("test_list", [])
+        code_test_setup = sample.get("test_setup_code", "")
 
         judge_cache: Dict[Optional[str], Tuple[bool, str]] = {
             None: (False, "no-extraction")
@@ -983,8 +999,18 @@ class SOO_Centered_v3_Main(SOO_Centered_v2_Main):
         def grade_canonical(canonical: Optional[str]) -> Tuple[bool, str]:
             if canonical in judge_cache:
                 return judge_cache[canonical]
-            response_text = self._canonical_response_text(canonical, task_type)
-            verdict = self._judge_or_default(query, response_text, gt)
+            if task_type == "code":
+                from evaluations.evaluate_code import grade_code_sample
+                verdict = grade_code_sample(
+                    canonical,
+                    entry_point=code_entry_point,
+                    test=code_test,
+                    test_list=code_test_list,
+                    test_setup_code=code_test_setup,
+                )
+            else:
+                response_text = self._canonical_response_text(canonical, task_type)
+                verdict = self._judge_or_default(query, response_text, gt)
             judge_cache[canonical] = verdict
             return verdict
 

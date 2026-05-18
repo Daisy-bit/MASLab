@@ -157,3 +157,52 @@ def eval_func_code(item, llm=None):
         return ("pass" if ok else f"fail: {msg}", 1 if ok else 0)
     except Exception as e:  # noqa: BLE001
         return f"Eval Error: {type(e).__name__}: {e}", None
+
+
+# ---------------------------------------------------------------------------
+# Inference-side grader: per-agent / per-round code grading
+# ---------------------------------------------------------------------------
+# Called from MAD_Vote_Main.inference / MAD_SCC_Main.inference /
+# SOO_Centered_v3_Main._inference_with_diagnostic when task_type == "code"
+# and emit_diagnostic = True. The caller passes the sample's test
+# context (test / test_list / test_setup_code / entry_point) and a single
+# canonical code string; we return (passed, status) the same way the
+# xverify path does, so the diagnostic schema and downstream
+# analyze_diagnostic.py code paths are unchanged.
+
+def grade_code_sample(
+    code,
+    *,
+    entry_point: str = "",
+    test=None,
+    test_list=None,
+    test_setup_code: str = "",
+    timeout: int = 10,
+):
+    """Subprocess-based code grader. Returns (passed: bool, status: str).
+
+    Mirrors mad_vote's `_judge_or_default` contract — failures are
+    reported as a short status string so callers can log them in the
+    judge_status field without leaking subprocess tracebacks.
+    """
+    if code is None or not str(code).strip():
+        return False, "empty-response"
+    # Late import keeps evaluate_code's import-time dependency small for
+    # callers that only want eval_func_code.
+    from methods.dylan.utils_humaneval import py_is_syntax_valid
+    if not py_is_syntax_valid(code):
+        return False, "syntax-invalid"
+    try:
+        if isinstance(test, str) and test.strip():
+            ok, msg = _run_humaneval(code, test, entry_point, timeout=timeout)
+        elif test_list:
+            ok, msg = _run_mbpp(
+                code, list(test_list), test_setup_code or "", timeout=timeout
+            )
+        else:
+            return False, "no-test"
+    except Exception as e:  # noqa: BLE001
+        return False, f"grader-error:{type(e).__name__}"
+    if ok:
+        return True, "ok"
+    return False, f"fail:{str(msg)[:80]}"

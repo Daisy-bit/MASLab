@@ -450,13 +450,29 @@ class MAD_SCC_Main(MAD_Vote_Main):
             None: (False, "no-extraction")
         }
 
+        # Code-grading context (used only when task_type == "code").
+        code_entry_point = sample.get("entry_point", "")
+        code_test = sample.get("test")
+        code_test_list = sample.get("test_list", [])
+        code_test_setup = sample.get("test_setup_code", "")
+
         def grade_canonical(canonical: Optional[str]) -> Tuple[bool, str]:
             if not self.emit_diagnostic:
                 return False, "emit-disabled"
             if canonical in judge_cache:
                 return judge_cache[canonical]
-            response_text = self._canonical_response_text(canonical)
-            verdict = self._judge_or_default(query, response_text, gt)
+            if self.task_type == "code":
+                from evaluations.evaluate_code import grade_code_sample
+                verdict = grade_code_sample(
+                    canonical,
+                    entry_point=code_entry_point,
+                    test=code_test,
+                    test_list=code_test_list,
+                    test_setup_code=code_test_setup,
+                )
+            else:
+                response_text = self._canonical_response_text(canonical)
+                verdict = self._judge_or_default(query, response_text, gt)
             judge_cache[canonical] = verdict
             return verdict
 
